@@ -17,7 +17,7 @@ import (
 // debugHandshake, if set, prints messages sent and received.  Key
 // exchange messages are printed as if DH were used, so the debug
 // messages are wrong when using ECDH.
-const debugHandshake = false
+const debugHandshake = true
 
 // chanSize sets the amount of buffering SSH connections. This is
 // primarily for testing: setting chanSize=0 uncovers deadlocks more
@@ -74,9 +74,10 @@ type handshakeTransport struct {
 	startKex chan *pendingKex
 
 	// data for host key checking
-	hostKeyCallback HostKeyCallback
-	dialAddress     string
-	remoteAddr      net.Addr
+	hostKeyCallback          HostKeyCallback
+	dialAddress              string
+	remoteAddr               net.Addr
+	deferHostKeyVerification bool
 
 	// Algorithms agreed in the last key exchange.
 	algorithms *algorithms
@@ -120,6 +121,7 @@ func newClientTransport(conn keyingTransport, clientVersion, serverVersion []byt
 	t.dialAddress = dialAddr
 	t.remoteAddr = addr
 	t.hostKeyCallback = config.HostKeyCallback
+	t.deferHostKeyVerification = config.DeferHostKeyVerification
 	if config.HostKeyAlgorithms != nil {
 		t.hostKeyAlgorithms = config.HostKeyAlgorithms
 	} else {
@@ -449,7 +451,9 @@ func (t *handshakeTransport) sendKexInit() error {
 	}
 	io.ReadFull(rand.Reader, msg.Cookie[:])
 
-	if len(t.hostKeys) > 0 {
+	if t.deferHostKeyVerification {
+		msg.ServerHostKeyAlgos = []string{KeyAlgoNone}
+	} else if len(t.hostKeys) > 0 {
 		for _, k := range t.hostKeys {
 			msg.ServerHostKeyAlgos = append(
 				msg.ServerHostKeyAlgos, k.PublicKey().Type())

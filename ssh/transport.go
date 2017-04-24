@@ -313,18 +313,8 @@ const packageVersion = "SSH-2.0-Go"
 // be US ASCII, start with "SSH-2.0-", and should not include a
 // newline. exchangeVersions returns the other side's version line.
 func exchangeVersions(rw io.ReadWriter, versionLine []byte) (them []byte, err error) {
-	// Contrary to the RFC, we do not ignore lines that don't
-	// start with "SSH-2.0-" to make the library usable with
-	// nonconforming servers.
-	for _, c := range versionLine {
-		// The spec disallows non US-ASCII chars, and
-		// specifically forbids null chars.
-		if c < 32 {
-			return nil, errors.New("ssh: junk character in version line")
-		}
-	}
-	if _, err = rw.Write(append(versionLine, '\r', '\n')); err != nil {
-		return
+	if err := writeVersion(rw, versionLine); err != nil {
+		return nil, err
 	}
 
 	them, err = readVersion(rw)
@@ -372,4 +362,21 @@ func readVersion(r io.Reader) ([]byte, error) {
 		versionString = versionString[:len(versionString)-1]
 	}
 	return versionString, nil
+}
+
+func writeVersion(w io.Writer, versionLine []byte) error {
+	// Contrary to the RFC, we do not ignore lines that don't
+	// start with "SSH-2.0-" to make the library usable with
+	// nonconforming servers.
+	for _, c := range versionLine {
+		// The spec disallows non US-ASCII chars, and
+		// specifically forbids null chars.
+		if c < 32 {
+			return errors.New("ssh: junk character in version line")
+		}
+	}
+	if _, err := w.Write(append(versionLine, '\r', '\n')); err != nil {
+		return err
+	}
+	return nil
 }

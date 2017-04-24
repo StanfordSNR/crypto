@@ -36,6 +36,7 @@ const (
 	KeyAlgoECDSA384 = "ecdsa-sha2-nistp384"
 	KeyAlgoECDSA521 = "ecdsa-sha2-nistp521"
 	KeyAlgoED25519  = "ssh-ed25519"
+	KeyAlgoNone     = "none"
 )
 
 // parsePubKey parses a public key of the given algorithm.
@@ -56,6 +57,8 @@ func parsePubKey(in []byte, algo string) (pubKey PublicKey, rest []byte, err err
 			return nil, nil, err
 		}
 		return cert, nil, nil
+	case KeyAlgoNone:
+		return parseNonePublicKey(in)
 	}
 	return nil, nil, fmt.Errorf("ssh: unknown key algorithm: %v", algo)
 }
@@ -627,6 +630,47 @@ func (key *ecdsaPublicKey) Verify(data []byte, sig *Signature) error {
 
 func (k *ecdsaPublicKey) CryptoPublicKey() crypto.PublicKey {
 	return (*ecdsa.PublicKey)(k)
+}
+
+type nonePublicKey struct {
+	PublicKey
+}
+
+func (r *nonePublicKey) Type() string {
+	return "none"
+}
+
+func parseNonePublicKey(in []byte) (out PublicKey, rest []byte, err error) {
+	key := &nonePublicKey{}
+	return key, rest, nil
+}
+
+func (k *nonePublicKey) Marshal() []byte {
+	w := struct {
+		Name string
+	}{
+		k.Type(),
+	}
+
+	return Marshal(&w)
+}
+
+func (k *nonePublicKey) Verify(data []byte, sig *Signature) error {
+	return nil
+}
+
+type NonePrivateKey struct {
+}
+
+func (k *NonePrivateKey) PublicKey() PublicKey {
+	return &nonePublicKey{}
+}
+
+func (k *NonePrivateKey) Sign(rand io.Reader, data []byte) (*Signature, error) {
+	return &Signature{
+		Format: k.PublicKey().Type(),
+		Blob:   []byte{},
+	}, nil
 }
 
 // NewSignerFromKey takes an *rsa.PrivateKey, *dsa.PrivateKey,

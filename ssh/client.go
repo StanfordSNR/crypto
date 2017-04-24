@@ -209,6 +209,8 @@ type ClientConfig struct {
 	// FixedHostKey can be used for simplistic host key checks.
 	HostKeyCallback HostKeyCallback
 
+	DeferHostKeyVerification bool
+
 	// ClientVersion contains the version identification string that will
 	// be used for the connection. If empty, a reasonable default is used.
 	ClientVersion string
