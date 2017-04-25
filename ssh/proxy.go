@@ -20,13 +20,43 @@ type proxy struct {
 	toServer side
 }
 
-func NewProxyConn(toClient net.Conn, toServer net.Conn) (ProxyConn, error) {
+func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig) (ProxyConn, error) {
 	var err error
 	serverVersion, err := readVersion(toServer)
 	if err != nil {
 		return nil, err
 	}
 	log.Printf("Read version: \"%s\" from server", serverVersion)
+
+	clientVersion, err := exchangeVersions(toClient, serverVersion)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("Read version: \"%s\" from client", clientVersion)
+
+	// Connect to server
+	clientConfig.SetDefaults()
+	clientConfig.ClientVersion = string(clientVersion)
+
+	if err = writeVersion(toServer, clientVersion); err != nil {
+		return nil, err
+	}
+
+	// TODO: replace this with host key verification callback
+	dialAddress := "0.0.0.0"
+
+	toServerTransport := newClientTransport(
+		newTransport(toServer, clientConfig.Rand, true /* is client */),
+		clientVersion, serverVersion, clientConfig, dialAddress, toServer.RemoteAddr())
+
+	if err := toServerTransport.waitSession(); err != nil {
+		return nil, err
+	}
+
+	toServerSessionID := toServerTransport.getSessionID()
+
+	conn := &connection{transport: toServerTransport}
+	conn.clientAuthenticate(clientConfig)
 
 	// Connect to client
 
@@ -35,12 +65,6 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn) (ProxyConn, error) {
 	serverConf.NoClientAuth = true
 	serverConf.ServerVersion = string(serverVersion)
 	serverConf.AddHostKey(&NonePrivateKey{})
-
-	clientVersion, err := exchangeVersions(toClient, serverVersion)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("Read version: \"%s\" from client", clientVersion)
 
 	toClientTransport := newServerTransport(
 		newTransport(toClient, serverConf.Rand, false /* not client */),
@@ -51,30 +75,6 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn) (ProxyConn, error) {
 	}
 
 	toClientSessionID := toClientTransport.getSessionID()
-
-	// Connect to server
-
-	clientConf := &ClientConfig{}
-	clientConf.SetDefaults()
-	clientConf.ClientVersion = string(clientVersion)
-	clientConf.HostKeyCallback = InsecureIgnoreHostKey()
-
-	if err = writeVersion(toServer, clientVersion); err != nil {
-		return nil, err
-	}
-
-	// TODO: replace this with host key verification callback
-	dialAddress := "0.0.0.0"
-
-	toServerTransport := newClientTransport(
-		newTransport(toServer, clientConf.Rand, true /* is client */),
-		clientVersion, serverVersion, clientConf, dialAddress, toServer.RemoteAddr())
-
-	if err := toServerTransport.waitSession(); err != nil {
-		return nil, err
-	}
-
-	toServerSessionID := toServerTransport.getSessionID()
 
 	return &proxy{
 		side{toClient, toClientTransport, toClientSessionID},
