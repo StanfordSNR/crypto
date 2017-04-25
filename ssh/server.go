@@ -206,25 +206,6 @@ func (s *connection) serverHandshake(config *ServerConfig) (*Permissions, error)
 	// We just did the key change, so the session ID is established.
 	s.sessionID = s.transport.getSessionID()
 
-	var packet []byte
-	if packet, err = s.transport.readPacket(); err != nil {
-		return nil, err
-	}
-
-	var serviceRequest serviceRequestMsg
-	if err = Unmarshal(packet, &serviceRequest); err != nil {
-		return nil, err
-	}
-	if serviceRequest.Service != serviceUserAuth {
-		return nil, errors.New("ssh: requested service '" + serviceRequest.Service + "' before authenticating")
-	}
-	serviceAccept := serviceAcceptMsg{
-		Service: serviceUserAuth,
-	}
-	if err := s.transport.writePacket(Marshal(&serviceAccept)); err != nil {
-		return nil, err
-	}
-
 	perms, err := s.serverAuthenticate(config)
 	if err != nil {
 		return nil, err
@@ -276,6 +257,26 @@ func (s *connection) serverAuthenticate(config *ServerConfig) (*Permissions, err
 	sessionID := s.transport.getSessionID()
 	var cache pubKeyCache
 	var perms *Permissions
+
+	var packet []byte
+	var err error
+	if packet, err = s.transport.readPacket(); err != nil {
+		return nil, err
+	}
+
+	var serviceRequest serviceRequestMsg
+	if err := Unmarshal(packet, &serviceRequest); err != nil {
+		return nil, err
+	}
+	if serviceRequest.Service != serviceUserAuth {
+		return nil, errors.New("ssh: requested service '" + serviceRequest.Service + "' before authenticating")
+	}
+	serviceAccept := serviceAcceptMsg{
+		Service: serviceUserAuth,
+	}
+	if err := s.transport.writePacket(Marshal(&serviceAccept)); err != nil {
+		return nil, err
+	}
 
 	authFailures := 0
 

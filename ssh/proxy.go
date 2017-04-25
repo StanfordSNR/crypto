@@ -18,6 +18,9 @@ type ProxyConn interface {
 type proxy struct {
 	toClient side
 	toServer side
+
+	clientConf *ClientConfig
+	serverConf ServerConfig
 }
 
 func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig) (ProxyConn, error) {
@@ -55,8 +58,8 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 
 	toServerSessionID := toServerTransport.getSessionID()
 
-	conn := &connection{transport: toServerTransport}
-	conn.clientAuthenticate(clientConfig)
+	toServerConn := &connection{transport: toServerTransport}
+	toServerConn.clientAuthenticate(clientConfig)
 
 	// Connect to client
 
@@ -75,19 +78,32 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 	}
 
 	toClientSessionID := toClientTransport.getSessionID()
+	toClientConn := &connection{transport: toClientTransport}
+	_, err = toClientConn.serverAuthenticate(&serverConf)
+	if err != nil {
+		return nil, err
+	}
 
 	return &proxy{
-		side{toClient, toClientTransport, toClientSessionID},
-		side{toServer, toServerTransport, toServerSessionID}}, nil
+		toClient:   side{toClient, toClientTransport, toClientSessionID},
+		toServer:   side{toServer, toServerTransport, toServerSessionID},
+		clientConf: clientConfig,
+		serverConf: serverConf,
+	}, nil
 }
 
 func (p *proxy) Run() <-chan error {
 	done := make(chan error, 1)
 	go func() {
+		// From client to server forwarding
 		for {
 			packet, err := p.toClient.trans.readPacket()
 			if err != nil {
 				done <- err
+				return
+			}
+			switch packet[0] {
+			// TODO: filter packets
 			}
 			p.toServer.trans.writePacket(packet)
 		}
@@ -95,9 +111,14 @@ func (p *proxy) Run() <-chan error {
 
 	go func() {
 		for {
+			// From server to client forwarding
 			packet, err := p.toServer.trans.readPacket()
 			if err != nil {
 				done <- err
+				return
+			}
+			switch packet[0] {
+			// TODO: filter packets
 			}
 			p.toClient.trans.writePacket(packet)
 		}
