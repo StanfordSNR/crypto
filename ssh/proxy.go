@@ -11,7 +11,9 @@ type side struct {
 	sessionId []byte
 }
 
-type ProxyConn interface{}
+type ProxyConn interface {
+	Run() (done <-chan error)
+}
 
 type proxy struct {
 	toClient side
@@ -77,4 +79,28 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn) (ProxyConn, error) {
 	return &proxy{
 		side{toClient, toClientTransport, toClientSessionID},
 		side{toServer, toServerTransport, toServerSessionID}}, nil
+}
+
+func (p *proxy) Run() <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		for {
+			packet, err := p.toClient.trans.readPacket()
+			if err != nil {
+				done <- err
+			}
+			p.toServer.trans.writePacket(packet)
+		}
+	}()
+
+	go func() {
+		for {
+			packet, err := p.toServer.trans.readPacket()
+			if err != nil {
+				done <- err
+			}
+			p.toClient.trans.writePacket(packet)
+		}
+	}()
+	return done
 }
