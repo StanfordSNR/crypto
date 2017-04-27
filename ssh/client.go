@@ -11,6 +11,7 @@ import (
 	"net"
 	"sync"
 	"time"
+	"log"
 )
 
 // Client implements a traditional SSH client that supports shells,
@@ -56,7 +57,10 @@ func NewClient(c Conn, chans <-chan NewChannel, reqs <-chan *Request) *Client {
 	go conn.handleGlobalRequests(reqs)
 	go conn.handleChannelOpens(chans)
 	go func() {
-		conn.Wait()
+		err := conn.Wait()
+		if err != nil {
+			log.Printf("error returned from conn wait: %s", err)
+		}
 		conn.forwards.closeAll()
 	}()
 	go conn.forwards.handleChannels(conn.HandleChannelOpen("forwarded-tcpip"))

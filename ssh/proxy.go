@@ -60,7 +60,10 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 	toServerSessionID := toServerTransport.getSessionID()
 
 	toServerConn := &connection{transport: toServerTransport}
-	toServerConn.clientAuthenticate(clientConfig)
+	err = toServerConn.clientAuthenticate(clientConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	doneWithKex := make(chan struct{})
 	toServerTransport.stopKexHandling(doneWithKex)
@@ -138,6 +141,7 @@ func (p *proxy) Run() <-chan error {
 
 			msg, err := decode(packet)
 			log.Printf("Got message from server: %s", reflect.TypeOf(msg))
+			log.Printf("Packet: %s", packet[0])
 			switch packet[0] {
 			case msgNewKeys:
 				log.Printf("Got msgNewKeys")
