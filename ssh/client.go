@@ -163,6 +163,11 @@ func (c *Client) handleChannelOpens(in <-chan NewChannel) {
 	c.mu.Unlock()
 }
 
+func (c *connection) RequestKeyChange() {
+	c.transport.deferHostKeyVerification = false
+	c.transport.requestKeyExchange()
+}
+
 // Dial starts a client connection to the given SSH server. It is a
 // convenience function that connects to the given network address,
 // initiates the SSH handshake, and then sets up a Client.  For access

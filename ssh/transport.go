@@ -139,7 +139,8 @@ func (s *connectionState) readPacket(r *bufio.Reader) ([]byte, error) {
 			case cipher := <-s.pendingKeyChange:
 				s.packetCipher = cipher
 			default:
-				return nil, errors.New("ssh: got bogus newkeys message.")
+				// TODO(dimakogan): handle this more accurately.
+				//				return nil, errors.New("ssh: got bogus newkeys message.")
 			}
 
 		case msgDisconnect:
@@ -187,7 +188,8 @@ func (s *connectionState) writePacket(w *bufio.Writer, rand io.Reader, packet []
 		case cipher := <-s.pendingKeyChange:
 			s.packetCipher = cipher
 		default:
-			panic("ssh: no key material for msgNewKeys")
+			// TODO(dimakogan): handle this more accurately.
+			//			panic("ssh: no key material for msgNewKeys")
 		}
 	}
 	return err

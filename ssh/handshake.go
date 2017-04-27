@@ -73,6 +73,11 @@ type handshakeTransport struct {
 	// packet is sent here for the write loop to find it.
 	startKex chan *pendingKex
 
+	stopOutKex chan chan<- struct{}
+	stopInKex  chan struct{}
+
+	responsibleForKex bool
+
 	// data for host key checking
 	hostKeyCallback          HostKeyCallback
 	dialAddress              string
@@ -99,14 +104,16 @@ type pendingKex struct {
 
 func newHandshakeTransport(conn keyingTransport, config *Config, clientVersion, serverVersion []byte) *handshakeTransport {
 	t := &handshakeTransport{
-		conn:          conn,
-		serverVersion: serverVersion,
-		clientVersion: clientVersion,
-		incoming:      make(chan []byte, chanSize),
-		requestKex:    make(chan struct{}, 1),
-		startKex:      make(chan *pendingKex, 1),
-
-		config: config,
+		conn:              conn,
+		serverVersion:     serverVersion,
+		clientVersion:     clientVersion,
+		incoming:          make(chan []byte, chanSize),
+		requestKex:        make(chan struct{}, 1),
+		startKex:          make(chan *pendingKex, 1),
+		stopOutKex:        make(chan chan<- struct{}, 1),
+		stopInKex:         make(chan struct{}, 1),
+		config:            config,
+		responsibleForKex: true,
 	}
 	t.resetReadThresholds()
 	t.resetWriteThresholds()
@@ -206,8 +213,10 @@ func (t *handshakeTransport) readLoop() {
 	// Stop writers too.
 	t.recordWriteError(t.readError)
 
-	// Unblock the writer should it wait for this.
-	close(t.startKex)
+	// Unblock the writer should it wait for this (only if responsibleForKex)
+	if t.responsibleForKex {
+		close(t.startKex)
+	}
 
 	// Don't close t.requestKex; it's also written to from writePacket.
 }
@@ -234,6 +243,10 @@ func (t *handshakeTransport) recordWriteError(err error) {
 }
 
 func (t *handshakeTransport) requestKeyExchange() {
+	if t.deferHostKeyVerification {
+		// Don't initiate kex when in deferred mode
+		return
+	}
 	select {
 	case t.requestKex <- struct{}{}:
 	default:
@@ -253,6 +266,8 @@ func (t *handshakeTransport) resetWriteThresholds() {
 }
 
 func (t *handshakeTransport) kexLoop() {
+	var onStop chan<- struct{}
+	requestKex := t.requestKex
 
 write:
 	for t.getWriteError() == nil {
@@ -264,10 +279,29 @@ write:
 			select {
 			case request, ok = <-t.startKex:
 				if !ok {
+					log.Printf("startKex not ok")
 					break write
 				}
-			case <-t.requestKex:
+			case <-requestKex:
 				break
+			case onStop = <-t.stopOutKex:
+				log.Printf("got stopOutKex, sent = %s", sent)
+				// Don't listen on new requests for outgoing kex,
+				// so no new outoing kex will be initiated
+				requestKex = nil
+
+				if !sent {
+					// If not awaiting a reply to an outgoing kex,
+					// stop incoming kex messages as well.
+					t.stopInKex <- struct{}{}
+				}
+				// Continue in case there are existing messages in startKex
+				continue
+			}
+			// If kex is being cancelled, then stop incoming messages after
+			// this one.
+			if requestKex == nil {
+				t.stopInKex <- struct{}{}
 			}
 
 			if !sent {
@@ -345,7 +379,13 @@ write:
 	}()
 
 	// Unblock reader.
-	t.conn.Close()
+	if t.writeError != nil {
+		t.conn.Close()
+	}
+	log.Printf("onStop == nil: %s", onStop == nil)
+	if onStop != nil {
+		onStop <- struct{}{}
+	}
 }
 
 // The protocol uses uint32 for packet counters, so we can't let them
@@ -367,9 +407,31 @@ func (t *handshakeTransport) resetReadThresholds() {
 }
 
 func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
-	p, err := t.conn.readPacket()
-	if err != nil {
-		return nil, err
+	packetCh := make(chan []byte)
+	errCh := make(chan error)
+	go func() {
+		if p, err := t.conn.readPacket(); err != nil {
+			errCh <- err
+		} else {
+			packetCh <- p
+		}
+	}()
+
+	var p []byte
+	for p == nil {
+		log.Printf("about to select in readOnePacket")
+		select {
+		case <-t.stopInKex:
+			log.Printf("got stopInKex")
+			close(t.startKex)
+			t.responsibleForKex = false
+		case err := <-errCh:
+			log.Printf("got errCh")
+			return nil, err
+		case p = <-packetCh:
+			log.Printf("got packetCh")
+		}
+
 	}
 
 	if t.readPacketsLeft > 0 {
@@ -392,7 +454,7 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 		return nil, fmt.Errorf("ssh: first packet should be msgKexInit")
 	}
 
-	if p[0] != msgKexInit {
+	if p[0] != msgKexInit || !t.responsibleForKex {
 		return p, nil
 	}
 
@@ -403,7 +465,7 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 		otherInit: p,
 	}
 	t.startKex <- &kex
-	err = <-kex.done
+	err := <-kex.done
 
 	if debugHandshake {
 		log.Printf("%s exited key exchange (first %v), err %v", t.id(), firstKex, err)
@@ -478,11 +540,13 @@ func (t *handshakeTransport) sendKexInit() error {
 }
 
 func (t *handshakeTransport) writePacket(p []byte) error {
-	switch p[0] {
-	case msgKexInit:
-		return errors.New("ssh: only handshakeTransport can send kexInit")
-	case msgNewKeys:
-		return errors.New("ssh: only handshakeTransport can send newKeys")
+	if t.responsibleForKex {
+		switch p[0] {
+		case msgKexInit:
+			return errors.New("ssh: only handshakeTransport can send kexInit")
+		case msgNewKeys:
+			return errors.New("ssh: only handshakeTransport can send newKeys")
+		}
 	}
 
 	t.mu.Lock()
@@ -641,4 +705,9 @@ func (t *handshakeTransport) client(kex kexAlgorithm, algs *algorithms, magics *
 	}
 
 	return result, nil
+}
+
+func (t *handshakeTransport) stopKexHandling(stopped chan<- struct{}) {
+	log.Printf("begin stopKexHandling")
+	t.stopOutKex <- stopped
 }

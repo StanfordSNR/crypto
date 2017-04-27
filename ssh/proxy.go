@@ -3,6 +3,7 @@ package ssh
 import (
 	"log"
 	"net"
+	"reflect"
 )
 
 type side struct {
@@ -61,6 +62,10 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 	toServerConn := &connection{transport: toServerTransport}
 	toServerConn.clientAuthenticate(clientConfig)
 
+	doneWithKex := make(chan struct{})
+	toServerTransport.stopKexHandling(doneWithKex)
+	<-doneWithKex
+
 	// Connect to client
 
 	serverConf := ServerConfig{}
@@ -84,6 +89,10 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 		return nil, err
 	}
 
+	doneWithKex = make(chan struct{})
+	toClientTransport.stopKexHandling(doneWithKex)
+	<-doneWithKex
+
 	return &proxy{
 		toClient:   side{toClient, toClientTransport, toClientSessionID},
 		toServer:   side{toServer, toServerTransport, toServerSessionID},
@@ -102,10 +111,19 @@ func (p *proxy) Run() <-chan error {
 				done <- err
 				return
 			}
+			msg, err := decode(packet)
+			log.Printf("Got message from client: %s", reflect.TypeOf(msg))
 			switch packet[0] {
-			// TODO: filter packets
+			case msgNewKeys:
+				log.Printf("Got msgNewKeys")
+			default:
+				// TODO: filter packets
 			}
-			p.toServer.trans.writePacket(packet)
+			err = p.toServer.trans.writePacket(packet)
+			if err != nil {
+				done <- err
+				return
+			}
 		}
 	}()
 
@@ -117,10 +135,20 @@ func (p *proxy) Run() <-chan error {
 				done <- err
 				return
 			}
+
+			msg, err := decode(packet)
+			log.Printf("Got message from server: %s", reflect.TypeOf(msg))
 			switch packet[0] {
-			// TODO: filter packets
+			case msgNewKeys:
+				log.Printf("Got msgNewKeys")
+			default:
+				// TODO: filter packets
 			}
-			p.toClient.trans.writePacket(packet)
+			err = p.toClient.trans.writePacket(packet)
+			if err != nil {
+				done <- err
+				return
+			}
 		}
 	}()
 	return done
