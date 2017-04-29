@@ -13,7 +13,7 @@ import (
 
 // debugTransport if set, will print packet types as they go over the
 // wire. No message decoding is done, to minimize the impact on timing.
-const debugTransport = false
+const debugTransport = true
 
 const (
 	gcmCipherID    = "aes128-gcm@openssh.com"
@@ -89,6 +89,25 @@ func (t *transport) prepareKeyChange(algs *algorithms, kexResult *kexResult) err
 	}
 
 	return nil
+}
+
+func (t *transport) getSequenceNumbers() (out uint32, in uint32) {
+	return t.writer.seqNum, t.reader.seqNum
+}
+
+func (t *transport) setOutgoingSequenceNumber(seqNum uint32) {
+	t.writer.seqNum = seqNum
+	if debugTransport {
+		log.Printf("Updated outoing sequence number to: %d", t.writer.seqNum)
+	}
+}
+
+func (t *transport) setIncomingSequenceNumber(seqNum uint32) {
+	t.reader.seqNum = seqNum
+	if debugTransport {
+		log.Printf("Updated incoming sequence number to: %d", t.reader.seqNum)
+	}
+
 }
 
 func (t *transport) printPacket(p []byte, write bool) {
