@@ -82,6 +82,7 @@ type handshakeTransport struct {
 	stopInKex  chan struct{}
 
 	responsibleForKex bool
+	kexCallback       KexCallback
 
 	// data for host key checking
 	hostKeyCallback          HostKeyCallback
@@ -122,6 +123,7 @@ func newHandshakeTransport(conn keyingTransport, config *Config, clientVersion, 
 		config:             config,
 		lastIncomingSeqNum: 0,
 		responsibleForKex:  true,
+		kexCallback:        config.KexCallback,
 	}
 	t.resetReadThresholds()
 	t.resetWriteThresholds()
@@ -422,6 +424,10 @@ write:
 			default:
 				break clear
 			}
+		}
+
+		if t.kexCallback != nil {
+			t.kexCallback(t.writeError)
 		}
 
 		request.done <- t.writeError
