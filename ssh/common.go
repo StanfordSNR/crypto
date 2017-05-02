@@ -177,6 +177,10 @@ func findAgreedAlgorithms(clientKexInit, serverKexInit *kexInitMsg) (algs *algor
 // stuff.
 const minRekeyThreshold uint64 = 256
 
+// KexCallback is the function type for getting kex-exchange completion
+// notifications.
+type KexCallback func(error)
+
 // Config contains configuration data common to both ServerConfig and
 // ClientConfig.
 type Config struct {
@@ -201,6 +205,9 @@ type Config struct {
 	// The allowed MAC algorithms. If unspecified then a sensible default
 	// is used.
 	MACs []string
+
+	// KexCallback is called after each Key Exchange
+	KexCallback KexCallback
 }
 
 // SetDefaults sets sensible values for unset fields in config. This is

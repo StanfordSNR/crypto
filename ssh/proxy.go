@@ -115,35 +115,36 @@ func (p *proxy) UpdateClientSessionParams() error {
 		log.Printf("Failed to send updateClientSessionParams")
 		return err
 	}
+	log.Printf("UpdateClientSessionParams Complete")
 
 	return nil
 }
 
 func (p *proxy) Run() <-chan error {
-	done := make(chan error, 1)
+	forwardingDone := make(chan error, 2)
 	go func() {
 		// From client to server forwarding
 		for {
 			packet, err := p.toClient.trans.readPacket()
 			if err != nil {
-				done <- err
+				forwardingDone <- err
 				return
 			}
+
+			msgNum := packet[0]
 			msg, err := decode(packet)
-			switch packet[0] {
-			case msgNewKeys:
-				log.Printf("Got msgNewKeys")
-			default:
-				// TODO: filter packets
-			}
 			err = p.toServer.trans.writePacket(packet)
 			if err != nil {
-				done <- err
+				forwardingDone <- err
 				return
 			}
 			_, in := p.toClient.trans.getSequenceNumbers()
 			out, _ := p.toServer.trans.getSequenceNumbers()
-			log.Printf("Got message from client: %s, seqNum: %d, forwarded as: %d", reflect.TypeOf(msg), in-1, out-1)
+			log.Printf("Got message from client: %d, %s, seqNum: %d, forwarded as: %d", msgNum, reflect.TypeOf(msg), in-1, out-1)
+			if msgNum == msgNewKeys {
+				log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
+				forwardingDone <- nil
+			}
 		}
 	}()
 
@@ -152,26 +153,37 @@ func (p *proxy) Run() <-chan error {
 			// From server to client forwarding
 			packet, err := p.toServer.trans.readPacket()
 			if err != nil {
-				done <- err
+				forwardingDone <- err
 				return
 			}
 
+			msgNum := packet[0]
 			msg, err := decode(packet)
-			switch packet[0] {
-			case msgNewKeys:
-				log.Printf("Got msgNewKeys")
-			default:
-				// TODO: filter packets
-			}
 			err = p.toClient.trans.writePacket(packet)
 			if err != nil {
-				done <- err
+				forwardingDone <- err
 				return
 			}
 			out, _ := p.toClient.trans.getSequenceNumbers()
 			_, in := p.toServer.trans.getSequenceNumbers()
-			log.Printf("Got message from server: %s, seqNum: %d, forwarded as: %d", reflect.TypeOf(msg), in-1, out-1)
+			log.Printf("Got message from server: %d, %s, seqNum: %d, forwarded as: %d", msgNum, reflect.TypeOf(msg), in-1, out-1)
+			if msgNum == msgNewKeys {
+				log.Printf("Got msgNewKeys from server, finishing server->client forwarding")
+				forwardingDone <- nil
+			}
 		}
+	}()
+	done := make(chan error)
+	go func() {
+		if err := <-forwardingDone; err != nil {
+			done <- err
+			return
+		}
+		if err := <-forwardingDone; err != nil {
+			done <- err
+			return
+		}
+		done <- nil
 	}()
 	return done
 }
