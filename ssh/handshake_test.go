@@ -370,6 +370,16 @@ func (n *errorKeyingTransport) getSessionID() []byte {
 	return nil
 }
 
+func (t *errorKeyingTransport) getSequenceNumbers() (out uint32, in uint32) {
+	return 0, 0
+}
+
+func (t *errorKeyingTransport) setOutgoingSequenceNumber(seqNum uint32) {
+}
+
+func (t *errorKeyingTransport) setIncomingSequenceNumber(seqNum uint32) {
+}
+
 func (n *errorKeyingTransport) writePacket(packet []byte) error {
 	if n.writeLeft == 0 {
 		n.Close()

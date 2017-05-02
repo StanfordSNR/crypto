@@ -210,7 +210,7 @@ func (s *streamPacketCipher) readPacket(seqNum uint32, r io.Reader) ([]byte, err
 		}
 		s.macResult = s.mac.Sum(s.macResult[:0])
 		if subtle.ConstantTimeCompare(s.macResult, mac) != 1 {
-			return nil, errors.New("ssh: MAC failure")
+			return nil, errors.New(fmt.Sprintf("ssh: MAC failure, expected seq num: %d", seqNum))
 		}
 	}
 
@@ -563,7 +563,7 @@ func (c *cbcCipher) readPacketLeaky(seqNum uint32, r io.Reader) ([]byte, error) 
 		c.mac.Write(c.packetData[:macStart])
 		c.macResult = c.mac.Sum(c.macResult[:0])
 		if subtle.ConstantTimeCompare(c.macResult, mac) != 1 {
-			return nil, cbcError("ssh: MAC failure")
+			return nil, cbcError(fmt.Sprintf("ssh: MAC failure, expected seq num: %d", seqNum))
 		}
 	}
 

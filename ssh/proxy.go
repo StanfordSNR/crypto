@@ -14,6 +14,7 @@ type side struct {
 
 type ProxyConn interface {
 	Run() (done <-chan error)
+	UpdateClientSessionParams() error
 }
 
 type proxy struct {
@@ -93,8 +94,10 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 	}
 
 	doneWithKex = make(chan struct{})
+	log.Printf("stopping  Kex")
 	toClientTransport.stopKexHandling(doneWithKex)
 	<-doneWithKex
+	log.Printf("Done with Kex")
 
 	return &proxy{
 		toClient:   side{toClient, toClientTransport, toClientSessionID},
@@ -102,6 +105,21 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 		clientConf: clientConfig,
 		serverConf: serverConf,
 	}, nil
+}
+
+func (p *proxy) UpdateClientSessionParams() error {
+	log.Printf("UpdateClientSessionParams begin")
+	sessionID := p.toServer.trans.getSessionID()
+	p2s, s2p := p.toServer.trans.getSequenceNumbers()
+
+	err := p.toClient.trans.updateSessionParams(sessionID, s2p, p2s)
+
+	if err != nil {
+		log.Printf("Failed to send updateClientSessionParams")
+		return err
+	}
+
+	return nil
 }
 
 func (p *proxy) Run() <-chan error {
@@ -115,7 +133,6 @@ func (p *proxy) Run() <-chan error {
 				return
 			}
 			msg, err := decode(packet)
-			log.Printf("Got message from client: %s", reflect.TypeOf(msg))
 			switch packet[0] {
 			case msgNewKeys:
 				log.Printf("Got msgNewKeys")
@@ -127,6 +144,9 @@ func (p *proxy) Run() <-chan error {
 				done <- err
 				return
 			}
+			_, in := p.toClient.trans.getSequenceNumbers()
+			out, _ := p.toServer.trans.getSequenceNumbers()
+			log.Printf("Got message from client: %s, seqNum: %d, forwarded as: %d", reflect.TypeOf(msg), in-1, out-1)
 		}
 	}()
 
@@ -153,6 +173,9 @@ func (p *proxy) Run() <-chan error {
 				done <- err
 				return
 			}
+			out, _ := p.toClient.trans.getSequenceNumbers()
+			_, in := p.toServer.trans.getSequenceNumbers()
+			log.Printf("Got message from server: %s, seqNum: %d, forwarded as: %d", reflect.TypeOf(msg), in-1, out-1)
 		}
 	}()
 	return done

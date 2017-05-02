@@ -34,6 +34,10 @@ type keyingTransport interface {
 	// direction will be effected if a msgNewKeys message is sent
 	// or received.
 	prepareKeyChange(*algorithms, *kexResult) error
+
+	getSequenceNumbers() (outgoing uint32, incoming uint32)
+	setOutgoingSequenceNumber(uint32)
+	setIncomingSequenceNumber(uint32)
 }
 
 // handshakeTransport implements rekeying on top of a keyingTransport
@@ -55,8 +59,9 @@ type handshakeTransport struct {
 	hostKeyAlgorithms []string
 
 	// On read error, incoming is closed, and readError is set.
-	incoming  chan []byte
-	readError error
+	incoming           chan []byte
+	lastIncomingSeqNum uint32
+	readError          error
 
 	mu             sync.Mutex
 	writeError     error
@@ -95,6 +100,8 @@ type handshakeTransport struct {
 
 	// The session ID or nil if first kex did not complete yet.
 	sessionID []byte
+
+	pendingSeqNumDelta uint32
 }
 
 type pendingKex struct {
@@ -104,16 +111,17 @@ type pendingKex struct {
 
 func newHandshakeTransport(conn keyingTransport, config *Config, clientVersion, serverVersion []byte) *handshakeTransport {
 	t := &handshakeTransport{
-		conn:              conn,
-		serverVersion:     serverVersion,
-		clientVersion:     clientVersion,
-		incoming:          make(chan []byte, chanSize),
-		requestKex:        make(chan struct{}, 1),
-		startKex:          make(chan *pendingKex, 1),
-		stopOutKex:        make(chan chan<- struct{}, 1),
-		stopInKex:         make(chan struct{}, 1),
-		config:            config,
-		responsibleForKex: true,
+		conn:               conn,
+		serverVersion:      serverVersion,
+		clientVersion:      clientVersion,
+		incoming:           make(chan []byte, chanSize),
+		requestKex:         make(chan struct{}, 1),
+		startKex:           make(chan *pendingKex, 1),
+		stopOutKex:         make(chan chan<- struct{}, 1),
+		stopInKex:          make(chan struct{}, 1),
+		config:             config,
+		lastIncomingSeqNum: 0,
+		responsibleForKex:  true,
 	}
 	t.resetReadThresholds()
 	t.resetWriteThresholds()
@@ -149,6 +157,69 @@ func newServerTransport(conn keyingTransport, clientVersion, serverVersion []byt
 
 func (t *handshakeTransport) getSessionID() []byte {
 	return t.sessionID
+}
+
+const updateSessionParamsReqId = "updateSessionParams@cs.stanford.edu"
+const confirmSessionParamsReqId = "confirmSessionParams@cs.stanford.edu"
+
+type updateSessionParams struct {
+	DeltaC2S  uint32
+	DeltaS2C  uint32
+	SessionID []byte
+}
+
+func (t *handshakeTransport) updateSessionParams(sessionID []byte, outSeqNum uint32, inSeqNum uint32) error {
+	t.sessionID = sessionID
+
+	oldOut, oldIn := t.getSequenceNumbers()
+
+	t.pendingSeqNumDelta = inSeqNum - oldIn - 1 // Of  by one because of the update packets themselves
+
+	err := t.pushPacket(
+		Marshal(globalRequestMsg{
+			Type:      updateSessionParamsReqId,
+			WantReply: false, // Don't use the stanard request confirmation mechanism
+			Data: Marshal(updateSessionParams{
+				DeltaC2S:  t.pendingSeqNumDelta,
+				DeltaS2C:  outSeqNum - oldOut - 1,
+				SessionID: sessionID,
+			}),
+		}))
+
+	if err != nil {
+		return err
+	}
+
+	t.conn.setOutgoingSequenceNumber(outSeqNum)
+	return nil
+}
+
+func (t *handshakeTransport) handleSessionParamsUpdates(sessionID []byte, deltaOut uint32, deltaIn uint32) error {
+	t.sessionID = sessionID
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	err := t.pushPacket(
+		Marshal(globalRequestMsg{
+			Type:      confirmSessionParamsReqId,
+			WantReply: false,
+		}),
+	)
+
+	if err != nil {
+		return err
+	}
+
+	outSeqNum, inSeqNum := t.conn.getSequenceNumbers()
+	t.conn.setIncomingSequenceNumber(inSeqNum + deltaIn)
+	t.conn.setOutgoingSequenceNumber(outSeqNum + deltaOut)
+	return nil
+}
+
+func (t *handshakeTransport) getSequenceNumbers() (out uint32, in uint32) {
+	out, _ = t.conn.getSequenceNumbers()
+	return out, t.lastIncomingSeqNum - uint32(len(t.incoming))
 }
 
 // waitSession waits for the session to be established. This should be
@@ -208,6 +279,8 @@ func (t *handshakeTransport) readLoop() {
 			continue
 		}
 		t.incoming <- p
+		_, in := t.conn.getSequenceNumbers()
+		t.lastIncomingSeqNum = in
 	}
 
 	// Stop writers too.
@@ -279,13 +352,11 @@ write:
 			select {
 			case request, ok = <-t.startKex:
 				if !ok {
-					log.Printf("startKex not ok")
 					break write
 				}
 			case <-requestKex:
 				break
 			case onStop = <-t.stopOutKex:
-				log.Printf("got stopOutKex, sent = %s", sent)
 				// Don't listen on new requests for outgoing kex,
 				// so no new outoing kex will be initiated
 				requestKex = nil
@@ -382,7 +453,6 @@ write:
 	if t.writeError != nil {
 		t.conn.Close()
 	}
-	log.Printf("onStop == nil: %s", onStop == nil)
 	if onStop != nil {
 		onStop <- struct{}{}
 	}
@@ -419,17 +489,13 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 
 	var p []byte
 	for p == nil {
-		log.Printf("about to select in readOnePacket")
 		select {
 		case <-t.stopInKex:
-			log.Printf("got stopInKex")
 			close(t.startKex)
 			t.responsibleForKex = false
 		case err := <-errCh:
-			log.Printf("got errCh")
 			return nil, err
 		case p = <-packetCh:
-			log.Printf("got packetCh")
 		}
 
 	}
@@ -448,6 +514,29 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 
 	if debugHandshake {
 		t.printPacket(p, false)
+	}
+
+	if p[0] == msgGlobalRequest {
+		var msg globalRequestMsg
+		if err := Unmarshal(p, &msg); err != nil {
+			return nil, err
+		}
+		switch msg.Type {
+		case confirmSessionParamsReqId:
+			_, inSeqNum := t.conn.getSequenceNumbers()
+			t.conn.setIncomingSequenceNumber(inSeqNum + t.pendingSeqNumDelta)
+			successPacket := []byte{msgIgnore}
+			return successPacket, nil
+		case updateSessionParamsReqId:
+			reqData := new(updateSessionParams)
+			if err := Unmarshal(msg.Data, reqData); err != nil {
+				log.Printf("Failed to unmarshal updateSessionParams %s", err)
+				return nil, err
+			}
+			t.handleSessionParamsUpdates(reqData.SessionID, reqData.DeltaC2S, reqData.DeltaS2C)
+			successPacket := []byte{msgIgnore}
+			return successPacket, nil
+		}
 	}
 
 	if first && p[0] != msgKexInit {
@@ -708,6 +797,5 @@ func (t *handshakeTransport) client(kex kexAlgorithm, algs *algorithms, magics *
 }
 
 func (t *handshakeTransport) stopKexHandling(stopped chan<- struct{}) {
-	log.Printf("begin stopKexHandling")
 	t.stopOutKex <- stopped
 }
