@@ -15,6 +15,7 @@ type side struct {
 type ProxyConn interface {
 	Run() (done <-chan error)
 	UpdateClientSessionParams() error
+	BufferedFromServer() int
 }
 
 type proxy struct {
@@ -197,4 +198,8 @@ func (p *proxy) Run() <-chan error {
 		done <- nil
 	}()
 	return done
+}
+
+func (p *proxy) BufferedFromServer() int {
+	return p.toServer.trans.buffered()
 }

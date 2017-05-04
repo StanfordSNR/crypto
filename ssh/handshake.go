@@ -283,6 +283,11 @@ func (t *handshakeTransport) readLoop() {
 		t.incoming <- p
 		_, in := t.conn.getSequenceNumbers()
 		t.lastIncomingSeqNum = in
+		// If not responsible for KEX, then new keys terminates this connection 
+		// (since the new keys will no longer be recognized).
+		if p[0] == msgNewKeys && !t.responsibleForKex {
+			break
+		}
 	}
 
 	// Stop writers too.
@@ -804,4 +809,8 @@ func (t *handshakeTransport) client(kex kexAlgorithm, algs *algorithms, magics *
 
 func (t *handshakeTransport) stopKexHandling(stopped chan<- struct{}) {
 	t.stopOutKex <- stopped
+}
+
+func (t *handshakeTransport) buffered() int {
+	return t.conn.buffered()
 }
