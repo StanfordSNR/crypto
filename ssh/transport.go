@@ -13,7 +13,7 @@ import (
 
 // debugTransport if set, will print packet types as they go over the
 // wire. No message decoding is done, to minimize the impact on timing.
-const debugTransport = true
+const debugTransport = false
 
 const (
 	gcmCipherID    = "aes128-gcm@openssh.com"
@@ -31,6 +31,9 @@ type packetConn interface {
 	// i.e. if error is nil, then the returned byte slice is
 	// always non-empty.
 	readPacket() ([]byte, error)
+
+	// buffered returns the number of bytes that are currently buffered by the read-side.
+	buffered() int
 
 	// Close closes the write-side of the connection.
 	Close() error
@@ -107,7 +110,10 @@ func (t *transport) setIncomingSequenceNumber(seqNum uint32) {
 	if debugTransport {
 		log.Printf("Updated incoming sequence number to: %d", t.reader.seqNum)
 	}
+}
 
+func (t *transport) buffered() int {
+	return t.bufReader.Buffered()
 }
 
 func (t *transport) printPacket(p []byte, write bool) {
