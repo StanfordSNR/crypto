@@ -6,6 +6,12 @@ import (
 	"reflect"
 )
 
+type ControlFields struct {
+    user    string
+    host    string
+    command string
+}
+
 type side struct {
 	conn      net.Conn
 	trans     *handshakeTransport
@@ -26,8 +32,17 @@ type proxy struct {
 	serverConf ServerConfig
 }
 
+const var controlFields common.ControlFields
+
 func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig) (ProxyConn, error) {
 	var err error
+
+	controlFieldsPacket, err = common.ReadControlPacket(toClient)
+	if err = ssh.Unmarshal(controlFieldsPacket, controlFields); err != nil {
+		done <- fmt.Errorf("Failed to unmarshal controlFields: %s", err)
+		return
+	}
+
 	serverVersion, err := readVersion(toServer)
 	if err != nil {
 		return nil, err

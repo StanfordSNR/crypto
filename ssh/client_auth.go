@@ -32,6 +32,7 @@ func (c *connection) clientAuthenticate(config *ClientConfig) error {
 	var lastMethods []string
 
 	sessionID := c.transport.getSessionID()
+
 	for auth := AuthMethod(new(noneAuth)); auth != nil; {
 		ok, methods, err := auth.auth(sessionID, config.User, c.transport, config.Rand)
 		if err != nil {
