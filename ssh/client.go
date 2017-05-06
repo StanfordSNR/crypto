@@ -172,6 +172,10 @@ func (c *connection) RequestKeyChange() {
 	c.transport.requestKeyExchange()
 }
 
+func (c *connection) ChannelRequestSuccessful() bool {
+	return c.transport.ChannelReqSuccessful()
+}
+
 // Dial starts a client connection to the given SSH server. It is a
 // convenience function that connects to the given network address,
 // initiates the SSH handshake, and then sets up a Client.  For access

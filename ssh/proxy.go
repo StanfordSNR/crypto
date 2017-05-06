@@ -4,13 +4,9 @@ import (
 	"log"
 	"net"
 	"reflect"
+	"github.com/dimakogan/ssh/gossh/policy"
+	"os"
 )
-
-type ControlFields struct {
-    user    string
-    host    string
-    command string
-}
 
 type side struct {
 	conn      net.Conn
@@ -32,16 +28,8 @@ type proxy struct {
 	serverConf ServerConfig
 }
 
-const var controlFields common.ControlFields
-
-func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig) (ProxyConn, error) {
+func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, pc policy.Policy) (ProxyConn, error) {
 	var err error
-
-	controlFieldsPacket, err = common.ReadControlPacket(toClient)
-	if err = ssh.Unmarshal(controlFieldsPacket, controlFields); err != nil {
-		done <- fmt.Errorf("Failed to unmarshal controlFields: %s", err)
-		return
-	}
 
 	serverVersion, err := readVersion(toServer)
 	if err != nil {
@@ -87,7 +75,6 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 	<-doneWithKex
 
 	// Connect to client
-
 	serverConf := ServerConfig{}
 	serverConf.SetDefaults()
 	serverConf.NoClientAuth = true
@@ -139,6 +126,8 @@ func (p *proxy) UpdateClientSessionParams() error {
 	return nil
 }
 
+// don't allow key exchange before channel has been opened -- no more sessions
+
 func (p *proxy) Run() <-chan error {
 	forwardingDone := make(chan error, 2)
 	go func() {
@@ -152,6 +141,17 @@ func (p *proxy) Run() <-chan error {
 
 			msgNum := packet[0]
 			msg, err := decode(packet)
+
+			if msgNum == msgChannelRequest {
+				chanReq, ok := msg.(*channelRequestMsg)
+				if !ok {
+					log.Printf("Should not happen.")
+				}
+				
+				log.Printf("HI| %s", chanReq.Request)
+				os.Exit(0)	
+			}
+
 			err = p.toServer.trans.writePacket(packet)
 			if err != nil {
 				forwardingDone <- err

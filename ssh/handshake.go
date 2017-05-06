@@ -74,6 +74,10 @@ type handshakeTransport struct {
 	// message.
 	requestKex chan struct{}
 
+	// To be used by client to avoid race when sending kexInit prior
+	// to successful command execution by agent
+	chanReqSuccessful bool
+
 	// If the other side requests or confirms a kex, its kexInit
 	// packet is sent here for the write loop to find it.
 	startKex chan *pendingKex
@@ -123,6 +127,7 @@ func newHandshakeTransport(conn keyingTransport, config *Config, clientVersion, 
 		config:             config,
 		lastIncomingSeqNum: 0,
 		responsibleForKex:  true,
+		chanReqSuccessful:  false,
 		kexCallback:        config.KexCallback,
 	}
 	t.resetReadThresholds()
@@ -175,12 +180,12 @@ func (t *handshakeTransport) updateSessionParams(sessionID []byte, outSeqNum uin
 
 	oldOut, oldIn := t.getSequenceNumbers()
 
-	t.pendingSeqNumDelta = inSeqNum - oldIn - 1 // Of  by one because of the update packets themselves
+	t.pendingSeqNumDelta = inSeqNum - oldIn - 1 // Off by one because of the update packets themselves
 
 	err := t.pushPacket(
 		Marshal(globalRequestMsg{
 			Type:      updateSessionParamsReqId,
-			WantReply: false, // Don't use the stanard request confirmation mechanism
+			WantReply: false, // Don't use the standard request confirmation mechanism
 			Data: Marshal(updateSessionParams{
 				DeltaC2S:  t.pendingSeqNumDelta,
 				DeltaS2C:  outSeqNum - oldOut - 1,
@@ -550,6 +555,11 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 		}
 	}
 
+	if p[0] == msgChannelSuccess {
+		fmt.Print("SUCCESSSSS\n\n")
+		t.chanReqSuccessful = true;
+	}
+
 	if first && p[0] != msgKexInit {
 		return nil, fmt.Errorf("ssh: first packet should be msgKexInit")
 	}
@@ -588,6 +598,11 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 	}
 
 	return successPacket, nil
+}
+
+func (t *handshakeTransport) ChannelReqSuccessful() bool {
+	fmt.Print("HIT\n")
+	return t.chanReqSuccessful
 }
 
 // sendKexInit sends a key change message.
