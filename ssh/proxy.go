@@ -24,10 +24,15 @@ type proxy struct {
 
 	clientConf *ClientConfig
 	serverConf ServerConfig
+
+	filterCB MessageFilterCallback
 }
 
-func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig) (ProxyConn, error) {
+type MessageFilterCallback func(p []byte) (isOK bool, err error)
+
+func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, filterCB MessageFilterCallback) (ProxyConn, error) {
 	var err error
+
 	serverVersion, err := readVersion(toServer)
 	if err != nil {
 		return nil, err
@@ -62,14 +67,16 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 	toServerSessionID := toServerTransport.getSessionID()
 
 	toServerConn := &connection{transport: toServerTransport}
-	toServerConn.clientAuthenticate(clientConfig)
+	err = toServerConn.clientAuthenticate(clientConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	doneWithKex := make(chan struct{})
 	toServerTransport.stopKexHandling(doneWithKex)
 	<-doneWithKex
 
 	// Connect to client
-
 	serverConf := ServerConfig{}
 	serverConf.SetDefaults()
 	serverConf.NoClientAuth = true
@@ -102,6 +109,7 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 		toServer:   side{toServer, toServerTransport, toServerSessionID},
 		clientConf: clientConfig,
 		serverConf: serverConf,
+		filterCB:   filterCB,
 	}, nil
 }
 
@@ -121,8 +129,11 @@ func (p *proxy) UpdateClientSessionParams() error {
 	return nil
 }
 
+// don't allow key exchange before channel has been opened -- no more sessions
+
 func (p *proxy) Run() <-chan error {
 	forwardingDone := make(chan error, 2)
+	var err error
 	go func() {
 		// From client to server forwarding
 		for {
@@ -134,19 +145,34 @@ func (p *proxy) Run() <-chan error {
 
 			msgNum := packet[0]
 			msg, err := decode(packet)
+
+			if msgNum == msgNewKeys {
+				log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
+				err = p.toServer.trans.writePacket(packet)
+				break
+			}
+
+			allowed, err := p.filterCB(packet)
+			if err != nil {
+				log.Printf("Got error from packet filter: %s", err)
+				break
+			}
+			if !allowed {
+				log.Printf("Packet from client to server blocked")
+				// TODO(dimakogan): nee to forge a response back to the client to announce the failure,
+				// and to conform to the protocol.
+				continue
+			}
+			// Packet allowed message, forwarding it.
 			err = p.toServer.trans.writePacket(packet)
 			if err != nil {
-				forwardingDone <- err
-				return
+				break
 			}
 			_, in := p.toClient.trans.getSequenceNumbers()
 			out, _ := p.toServer.trans.getSequenceNumbers()
 			log.Printf("Got message from client: %d, %s, seqNum: %d, forwarded as: %d", msgNum, reflect.TypeOf(msg), in-1, out-1)
-			if msgNum == msgNewKeys {
-				log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
-				forwardingDone <- nil
-			}
 		}
+		forwardingDone <- err
 	}()
 
 	go func() {
@@ -158,8 +184,17 @@ func (p *proxy) Run() <-chan error {
 				return
 			}
 
+			switch packet[0] {
+			case msgNewKeys:
+				log.Printf("Got msgNewKeys, completing handoff")
+			default:
+				// TODO: filter packets
+			}
 			msgNum := packet[0]
 			msg, err := decode(packet)
+			log.Printf("Packet: %d", packet[0])
+			log.Printf("Got message from server: %s", reflect.TypeOf(msg))
+
 			err = p.toClient.trans.writePacket(packet)
 			if err != nil {
 				forwardingDone <- err
