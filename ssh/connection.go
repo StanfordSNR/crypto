@@ -72,9 +72,6 @@ type Conn interface {
 	// Requests key re-exhange.
 	RequestKeyChange()
 
-	// Check conn status
-	ChannelRequestSuccessful() bool
-
 	// TODO(hanwen): consider exposing:
 	//   Disconnect
 }

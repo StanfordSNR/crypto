@@ -17,7 +17,7 @@ import (
 // debugHandshake, if set, prints messages sent and received.  Key
 // exchange messages are printed as if DH were used, so the debug
 // messages are wrong when using ECDH.
-const debugHandshake = true
+const debugHandshake = false
 
 // chanSize sets the amount of buffering SSH connections. This is
 // primarily for testing: setting chanSize=0 uncovers deadlocks more
@@ -74,10 +74,6 @@ type handshakeTransport struct {
 	// message.
 	requestKex chan struct{}
 
-	// To be used by client to avoid race when sending kexInit prior
-	// to successful command execution by agent
-	chanReqSuccessful bool
-
 	// If the other side requests or confirms a kex, its kexInit
 	// packet is sent here for the write loop to find it.
 	startKex chan *pendingKex
@@ -127,7 +123,6 @@ func newHandshakeTransport(conn keyingTransport, config *Config, clientVersion, 
 		config:             config,
 		lastIncomingSeqNum: 0,
 		responsibleForKex:  true,
-		chanReqSuccessful:  false,
 		kexCallback:        config.KexCallback,
 	}
 	t.resetReadThresholds()
@@ -288,7 +283,7 @@ func (t *handshakeTransport) readLoop() {
 		t.incoming <- p
 		_, in := t.conn.getSequenceNumbers()
 		t.lastIncomingSeqNum = in
-		// If not responsible for KEX, then new keys terminates this connection 
+		// If not responsible for KEX, then new keys terminates this connection
 		// (since the new keys will no longer be recognized).
 		if p[0] == msgNewKeys && !t.responsibleForKex {
 			break
@@ -555,11 +550,6 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 		}
 	}
 
-	if p[0] == msgChannelSuccess {
-		fmt.Print("SUCCESSSSS\n\n")
-		t.chanReqSuccessful = true;
-	}
-
 	if first && p[0] != msgKexInit {
 		return nil, fmt.Errorf("ssh: first packet should be msgKexInit")
 	}
@@ -598,11 +588,6 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 	}
 
 	return successPacket, nil
-}
-
-func (t *handshakeTransport) ChannelReqSuccessful() bool {
-	fmt.Print("HIT\n")
-	return t.chanReqSuccessful
 }
 
 // sendKexInit sends a key change message.

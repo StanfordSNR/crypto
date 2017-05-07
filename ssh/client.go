@@ -8,10 +8,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
-	"log"
 )
 
 // Client implements a traditional SSH client that supports shells,
@@ -170,10 +170,6 @@ func (c *Client) handleChannelOpens(in <-chan NewChannel) {
 func (c *connection) RequestKeyChange() {
 	c.transport.deferHostKeyVerification = false
 	c.transport.requestKeyExchange()
-}
-
-func (c *connection) ChannelRequestSuccessful() bool {
-	return c.transport.ChannelReqSuccessful()
 }
 
 // Dial starts a client connection to the given SSH server. It is a
