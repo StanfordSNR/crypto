@@ -59,7 +59,7 @@ func NewClient(c Conn, chans <-chan NewChannel, reqs <-chan *Request) *Client {
 	go func() {
 		err := conn.Wait()
 		if err != nil {
-			log.Printf("error returned from conn wait: %s", err)
+			log.Printf("error returned from conn wait:  %+v", err)
 		}
 		conn.forwards.closeAll()
 	}()

@@ -30,7 +30,7 @@ type proxy struct {
 
 type MessageFilterCallback func(p []byte) (isOK bool, err error)
 
-func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, filterCB MessageFilterCallback) (ProxyConn, error) {
+func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, filterCB MessageFilterCallback) (ProxyConn, error) {
 	var err error
 
 	serverVersion, err := readVersion(toServer)
@@ -52,9 +52,6 @@ func NewProxyConn(toClient net.Conn, toServer net.Conn, clientConfig *ClientConf
 	if err = writeVersion(toServer, clientVersion); err != nil {
 		return nil, err
 	}
-
-	// TODO: replace this with host key verification callback
-	dialAddress := "0.0.0.0"
 
 	toServerTransport := newClientTransport(
 		newTransport(toServer, clientConfig.Rand, true /* is client */),

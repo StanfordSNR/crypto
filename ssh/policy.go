@@ -9,13 +9,13 @@ import (
 )
 
 type Policy struct {
-	user    string
-	command string
-	server  string
+	User    string
+	Command string
+	Server  string
 }
 
 func NewPolicy(u string, c string, s string) *Policy {
-	return &Policy{user: u, command: c, server: s}
+	return &Policy{User: u, Command: c, Server: s}
 }
 
 func (pc *Policy) AskForApproval() error {
@@ -23,7 +23,7 @@ func (pc *Policy) AskForApproval() error {
 	var text string
 	// switch to regex
 	for text != "y" && text != "n" {
-		log.Printf("\nApprove '%s' on %s by %s? [y/n]:\n", pc.command, pc.server, pc.user)
+		log.Printf("\nApprove '%s' on %s by %s? [y/n]:\n", pc.Command, pc.Server, pc.User)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
 	}
@@ -52,8 +52,8 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, err error) {
 		if err := Unmarshal(msg.RequestSpecificData, &execReq); err != nil {
 			return false, err
 		}
-		if execReq.Command != pc.command {
-			log.Printf("Unexpected command: %s, (expecting: %s)", execReq.Command, pc.command)
+		if execReq.Command != pc.Command {
+			log.Printf("Unexpected command: %s, (expecting: %s)", execReq.Command, pc.Command)
 			return false, nil
 		}
 		log.Printf("Succesfully validated channelRequest for: %s", execReq.Command)
