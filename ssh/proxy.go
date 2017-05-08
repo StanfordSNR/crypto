@@ -28,7 +28,7 @@ type proxy struct {
 	filterCB MessageFilterCallback
 }
 
-type MessageFilterCallback func(p []byte) (isOK bool, err error)
+type MessageFilterCallback func(p []byte) (isOK bool, response []byte, err error)
 
 func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, filterCB MessageFilterCallback) (ProxyConn, error) {
 	var err error
@@ -149,7 +149,7 @@ func (p *proxy) Run() <-chan error {
 				break
 			}
 
-			allowed, err := p.filterCB(packet)
+			allowed, response, err := p.filterCB(packet)
 			if err != nil {
 				log.Printf("Got error from packet filter: %s", err)
 				break
@@ -158,6 +158,9 @@ func (p *proxy) Run() <-chan error {
 				log.Printf("Packet from client to server blocked")
 				// TODO(dimakogan): nee to forge a response back to the client to announce the failure,
 				// and to conform to the protocol.
+				if err = p.toClient.trans.writePacket(response); err != nil {
+					break
+				}
 				continue
 			}
 			// Packet allowed message, forwarding it.
