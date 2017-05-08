@@ -142,12 +142,7 @@ func (p *proxy) Run() <-chan error {
 
 			msgNum := packet[0]
 			msg, err := decode(packet)
-
-			if msgNum == msgNewKeys {
-				log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
-				err = p.toServer.trans.writePacket(packet)
-				break
-			}
+			log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
 
 			allowed, response, err := p.filterCB(packet)
 			if err != nil {
@@ -168,9 +163,15 @@ func (p *proxy) Run() <-chan error {
 			if err != nil {
 				break
 			}
-			_, in := p.toClient.trans.getSequenceNumbers()
-			out, _ := p.toServer.trans.getSequenceNumbers()
-			log.Printf("Got message from client: %d, %s, seqNum: %d, forwarded as: %d", msgNum, reflect.TypeOf(msg), in-1, out-1)
+			// _, in := p.toClient.trans.getSequenceNumbers()
+			// out, _ := p.toServer.trans.getSequenceNumbers()
+			//log.Printf("Forwarded seqNum: %d from client to server as: %d", in-1, out-1)
+
+			if msgNum == msgNewKeys {
+				log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
+				break
+			}
+
 		}
 		forwardingDone <- err
 	}()
@@ -181,31 +182,25 @@ func (p *proxy) Run() <-chan error {
 			packet, err := p.toServer.trans.readPacket()
 			if err != nil {
 				forwardingDone <- err
-				return
+				break
 			}
 
-			switch packet[0] {
-			case msgNewKeys:
-				log.Printf("Got msgNewKeys, completing handoff")
-			default:
-				// TODO: filter packets
-			}
 			msgNum := packet[0]
 			msg, err := decode(packet)
-			log.Printf("Packet: %d", packet[0])
-			log.Printf("Got message from server: %s", reflect.TypeOf(msg))
+			log.Printf("Got message %d from server: %s", packet[0], reflect.TypeOf(msg))
 
 			err = p.toClient.trans.writePacket(packet)
 			if err != nil {
 				forwardingDone <- err
-				return
+				break
 			}
-			out, _ := p.toClient.trans.getSequenceNumbers()
-			_, in := p.toServer.trans.getSequenceNumbers()
-			log.Printf("Got message from server: %d, %s, seqNum: %d, forwarded as: %d", msgNum, reflect.TypeOf(msg), in-1, out-1)
+			// out, _ := p.toClient.trans.getSequenceNumbers()
+			// _, in := p.toServer.trans.getSequenceNumbers()
+			// log.Printf("Forwarded seqNum: %d from server to client as: %d", in-1, out-1)
 			if msgNum == msgNewKeys {
 				log.Printf("Got msgNewKeys from server, finishing server->client forwarding")
 				forwardingDone <- nil
+				break
 			}
 		}
 	}()
