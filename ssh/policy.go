@@ -35,29 +35,35 @@ func (pc *Policy) AskForApproval() error {
 	return err
 }
 
-func (pc *Policy) FilterPacket(packet []byte) (allowed bool, err error) {
+func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, err error) {
 	decoded, err := decode(packet)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	switch msg := decoded.(type) {
+	case *channelOpenMsg:
+		if msg.ChanType != "session" {
+			return false, Marshal(channelOpenFailureMsg{}), nil
+		}
+		return true, nil, nil
 	case *channelRequestMsg:
 		if msg.Request != "exec" {
-			log.Print("Got channel request for: %s instead of 'exec'", msg.Request)
-			return false, nil
+			log.Printf("Channel request %s blocked (only 'exec' is allowed)", msg.Request)
+			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
 
 		var execReq execMsg
 		if err := Unmarshal(msg.RequestSpecificData, &execReq); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if execReq.Command != pc.Command {
 			log.Printf("Unexpected command: %s, (expecting: %s)", execReq.Command, pc.Command)
-			return false, nil
+			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
 		log.Printf("Succesfully validated channelRequest for: %s", execReq.Command)
-		return true, nil
+		return true, nil, nil
+	default:
+		return true, nil, nil
 	}
-	return true, nil
 }
