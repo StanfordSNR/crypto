@@ -26,6 +26,7 @@ func (pc *Policy) AskForApproval() error {
 		log.Printf("\nApprove '%s' on %s by %s? [y/n]:\n", pc.Command, pc.Server, pc.User)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
+		fmt.Printf("Response: %s", text)
 	}
 
 	var err error
