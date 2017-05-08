@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -58,7 +59,7 @@ func NewClient(c Conn, chans <-chan NewChannel, reqs <-chan *Request) *Client {
 	go conn.handleChannelOpens(chans)
 	go func() {
 		err := conn.Wait()
-		if err != nil {
+		if err != nil && err != io.ErrClosedPipe {
 			log.Printf("error returned from conn wait:  %+v", err)
 		}
 		conn.forwards.closeAll()
