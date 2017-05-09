@@ -13,6 +13,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/dimakogan/ssh/gossh/common"
 )
 
 // Client implements a traditional SSH client that supports shells,
@@ -92,6 +94,31 @@ func NewClientConn(c net.Conn, addr string, config *ClientConfig) (Conn, <-chan 
 	return conn, conn.mux.incomingChannels, conn.mux.incomingRequests, nil
 }
 
+func NewClientConnFromHandoff(c net.Conn, addr string, handoff *common.ExecutionApprovedMessage, config *ClientConfig) (Conn, <-chan NewChannel, <-chan *Request, error) {
+	fullConf := *config
+	fullConf.SetDefaults()
+	transport := newTransport(c, fullConf.Rand, true /* is client */)
+	transport.setIncomingSequenceNumber(handoff.InSeqNum)
+	transport.setOutgoingSequenceNumber(handoff.OutSeqNum)
+	handshakeTransport := newClientTransport(
+		transport,
+		[]byte(fullConf.ClientVersion), []byte(handoff.ServerVersion), &fullConf, addr, c.RemoteAddr(), handoff.SessionID)
+	if err := handshakeTransport.waitSession(); err != nil {
+		return nil, nil, nil, err
+	}
+	conn := &connection{
+		transport: handshakeTransport,
+		sshConn: sshConn{
+			conn:          c,
+			clientVersion: []byte(fullConf.ClientVersion),
+			serverVersion: []byte(handoff.ServerVersion),
+			sessionID:     handoff.SessionID,
+		},
+	}
+	conn.mux = newMux(conn.transport)
+	return conn, conn.mux.incomingChannels, conn.mux.incomingRequests, nil
+}
+
 // clientHandshake performs the client side key exchange. See RFC 4253 Section
 // 7.
 func (c *connection) clientHandshake(dialAddress string, config *ClientConfig) error {
@@ -108,7 +135,7 @@ func (c *connection) clientHandshake(dialAddress string, config *ClientConfig) e
 
 	c.transport = newClientTransport(
 		newTransport(c.sshConn.conn, config.Rand, true /* is client */),
-		c.clientVersion, c.serverVersion, config, dialAddress, c.sshConn.RemoteAddr())
+		c.clientVersion, c.serverVersion, config, dialAddress, c.sshConn.RemoteAddr(), nil)
 	if err := c.transport.waitSession(); err != nil {
 		return err
 	}

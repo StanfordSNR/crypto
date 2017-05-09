@@ -17,7 +17,7 @@ import (
 // debugHandshake, if set, prints messages sent and received.  Key
 // exchange messages are printed as if DH were used, so the debug
 // messages are wrong when using ECDH.
-const debugHandshake = false
+const debugHandshake = true
 
 // chanSize sets the amount of buffering SSH connections. This is
 // primarily for testing: setting chanSize=0 uncovers deadlocks more
@@ -81,8 +81,9 @@ type handshakeTransport struct {
 	stopOutKex chan chan<- struct{}
 	stopInKex  chan struct{}
 
-	responsibleForKex bool
-	kexCallback       KexCallback
+	responsibleForKex  bool
+	suppressMsgNewKeys bool
+	kexCallback        KexCallback
 
 	// data for host key checking
 	hostKeyCallback          HostKeyCallback
@@ -133,12 +134,13 @@ func newHandshakeTransport(conn keyingTransport, config *Config, clientVersion, 
 	return t
 }
 
-func newClientTransport(conn keyingTransport, clientVersion, serverVersion []byte, config *ClientConfig, dialAddr string, addr net.Addr) *handshakeTransport {
+func newClientTransport(conn keyingTransport, clientVersion, serverVersion []byte, config *ClientConfig, dialAddr string, addr net.Addr, sessionID []byte) *handshakeTransport {
 	t := newHandshakeTransport(conn, &config.Config, clientVersion, serverVersion)
 	t.dialAddress = dialAddr
 	t.remoteAddr = addr
 	t.hostKeyCallback = config.HostKeyCallback
 	t.deferHostKeyVerification = config.DeferHostKeyVerification
+	t.sessionID = sessionID
 	if config.HostKeyAlgorithms != nil {
 		t.hostKeyAlgorithms = config.HostKeyAlgorithms
 	} else {
@@ -558,8 +560,6 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 		return p, nil
 	}
 
-	firstKex := t.sessionID == nil
-
 	kex := pendingKex{
 		done:      make(chan error, 1),
 		otherInit: p,
@@ -568,7 +568,7 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 	err := <-kex.done
 
 	if debugHandshake {
-		log.Printf("%s exited key exchange (first %v), err %v", t.id(), firstKex, err)
+		log.Printf("%s exited key exchange, err %v", t.id(), err)
 	}
 
 	if err != nil {
@@ -577,14 +577,10 @@ func (t *handshakeTransport) readOnePacket(first bool) ([]byte, error) {
 
 	t.resetReadThresholds()
 
-	// By default, a key exchange is hidden from higher layers by
-	// translating it into msgIgnore.
-	successPacket := []byte{msgIgnore}
-	if firstKex {
-		// sendKexInit() for the first kex waits for
-		// msgNewKeys so the authentication process is
-		// guaranteed to happen over an encrypted transport.
-		successPacket = []byte{msgNewKeys}
+	successPacket := []byte{msgNewKeys}
+	if t.suppressMsgNewKeys {
+		successPacket = []byte{msgIgnore}
+		t.suppressMsgNewKeys = true
 	}
 
 	return successPacket, nil

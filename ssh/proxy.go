@@ -1,129 +1,99 @@
 package ssh
 
 import (
+	"crypto/rand"
 	"log"
 	"net"
 	"reflect"
-)
 
-type side struct {
-	conn      net.Conn
-	trans     *handshakeTransport
-	sessionId []byte
-}
+	"github.com/dimakogan/ssh/gossh/common"
+)
 
 type ProxyConn interface {
 	Run() (done <-chan error)
-	UpdateClientSessionParams() error
+	GetSessionParams() common.ExecutionApprovedMessage
 	BufferedFromServer() int
 }
 
 type proxy struct {
-	toClient side
-	toServer side
+	toServer          net.Conn
+	toServerTransport *handshakeTransport
+	toServerConn      Conn
+
+	toClientTransport *transport
 
 	clientConf *ClientConfig
-	serverConf ServerConfig
-
-	filterCB MessageFilterCallback
 }
 
 type MessageFilterCallback func(p []byte) (isOK bool, response []byte, err error)
 
-func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, filterCB MessageFilterCallback) (ProxyConn, error) {
+func NewProxyConn(dialAddress string, toServer net.Conn, toClient net.Conn, clientConfig *ClientConfig) (ProxyConn, error) {
 	var err error
-
-	serverVersion, err := readVersion(toServer)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("Read version: \"%s\" from server", serverVersion)
-
-	clientVersion, err := exchangeVersions(toClient, serverVersion)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("Read version: \"%s\" from client", clientVersion)
-
+	log.Printf("NewProxyCOnn")
 	// Connect to server
 	clientConfig.SetDefaults()
-	clientConfig.ClientVersion = string(clientVersion)
 
-	if err = writeVersion(toServer, clientVersion); err != nil {
+	serverVersion, err := exchangeVersions(toServer, []byte(clientConfig.ClientVersion))
+	if err != nil {
+		log.Printf("exchangeVersions failed")
 		return nil, err
 	}
+	log.Printf("Got server version: %s", serverVersion)
 
 	toServerTransport := newClientTransport(
 		newTransport(toServer, clientConfig.Rand, true /* is client */),
-		clientVersion, serverVersion, clientConfig, dialAddress, toServer.RemoteAddr())
+		[]byte(clientConfig.ClientVersion), serverVersion, clientConfig, dialAddress, toServer.RemoteAddr(), nil)
 
 	if err := toServerTransport.waitSession(); err != nil {
+		log.Printf("wait session failed: %s", err)
 		return nil, err
 	}
 
 	toServerSessionID := toServerTransport.getSessionID()
 
-	toServerConn := &connection{transport: toServerTransport}
+	toServerConn := &connection{
+		transport: toServerTransport,
+		sshConn: sshConn{
+			conn:          toServer,
+			serverVersion: serverVersion,
+			sessionID:     toServerSessionID,
+			clientVersion: []byte(clientConfig.ClientVersion),
+		},
+	}
 	err = toServerConn.clientAuthenticate(clientConfig)
 	if err != nil {
+		log.Printf("Failed to authenticate with server ")
 		return nil, err
 	}
+	log.Printf("Authenticated with server ")
 
 	doneWithKex := make(chan struct{})
 	toServerTransport.stopKexHandling(doneWithKex)
 	<-doneWithKex
 
-	// Connect to client
-	serverConf := ServerConfig{}
-	serverConf.SetDefaults()
-	serverConf.NoClientAuth = true
-	serverConf.ServerVersion = string(serverVersion)
-	serverConf.AddHostKey(&NonePrivateKey{})
-
-	toClientTransport := newServerTransport(
-		newTransport(toClient, serverConf.Rand, false /* not client */),
-		clientVersion, serverVersion, &serverConf)
-
-	if err = toClientTransport.waitSession(); err != nil {
-		return nil, err
-	}
-
-	toClientSessionID := toClientTransport.getSessionID()
-	toClientConn := &connection{transport: toClientTransport}
-	_, err = toClientConn.serverAuthenticate(&serverConf)
-	if err != nil {
-		return nil, err
-	}
-
-	doneWithKex = make(chan struct{})
-	log.Printf("stopping  Kex")
-	toClientTransport.stopKexHandling(doneWithKex)
-	<-doneWithKex
-	log.Printf("Done with Kex")
+	toClientTransport := newTransport(toClient, rand.Reader, false)
+	p2s, s2p := toServerTransport.getSequenceNumbers()
+	toClientTransport.setIncomingSequenceNumber(p2s)
+	toClientTransport.setOutgoingSequenceNumber(s2p)
 
 	return &proxy{
-		toClient:   side{toClient, toClientTransport, toClientSessionID},
-		toServer:   side{toServer, toServerTransport, toServerSessionID},
-		clientConf: clientConfig,
-		serverConf: serverConf,
-		filterCB:   filterCB,
+		toServer:          toServer,
+		toServerTransport: toServerTransport,
+		toServerConn:      toServerConn,
+		clientConf:        clientConfig,
+		toClientTransport: toClientTransport,
 	}, nil
 }
 
-func (p *proxy) UpdateClientSessionParams() error {
-	log.Printf("UpdateClientSessionParams begin")
-	sessionID := p.toServer.trans.getSessionID()
-	p2s, s2p := p.toServer.trans.getSequenceNumbers()
-
-	err := p.toClient.trans.updateSessionParams(sessionID, s2p, p2s)
-
-	if err != nil {
-		log.Printf("Failed to send updateClientSessionParams")
-		return err
+func (p *proxy) GetSessionParams() common.ExecutionApprovedMessage {
+	log.Printf("GetSessionParams begin")
+	c2p, p2c := p.toClientTransport.getSequenceNumbers()
+	return common.ExecutionApprovedMessage{
+		InSeqNum:      p2c,
+		OutSeqNum:     c2p,
+		ServerVersion: p.toServerConn.ServerVersion(),
+		SessionID:     p.toServerTransport.getSessionID(),
 	}
-	log.Printf("UpdateClientSessionParams Complete")
-
-	return nil
 }
 
 // don't allow key exchange before channel has been opened -- no more sessions
@@ -131,10 +101,11 @@ func (p *proxy) UpdateClientSessionParams() error {
 func (p *proxy) Run() <-chan error {
 	forwardingDone := make(chan error, 2)
 	var err error
+
 	go func() {
 		// From client to server forwarding
 		for {
-			packet, err := p.toClient.trans.readPacket()
+			packet, err := p.toClientTransport.readPacket()
 			if err != nil {
 				forwardingDone <- err
 				return
@@ -144,22 +115,8 @@ func (p *proxy) Run() <-chan error {
 			msg, err := decode(packet)
 			log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
 
-			allowed, response, err := p.filterCB(packet)
-			if err != nil {
-				log.Printf("Got error from packet filter: %s", err)
-				break
-			}
-			if !allowed {
-				log.Printf("Packet from client to server blocked")
-				// TODO(dimakogan): nee to forge a response back to the client to announce the failure,
-				// and to conform to the protocol.
-				if err = p.toClient.trans.writePacket(response); err != nil {
-					break
-				}
-				continue
-			}
 			// Packet allowed message, forwarding it.
-			err = p.toServer.trans.writePacket(packet)
+			err = p.toServerTransport.writePacket(packet)
 			if err != nil {
 				break
 			}
@@ -179,7 +136,7 @@ func (p *proxy) Run() <-chan error {
 	go func() {
 		for {
 			// From server to client forwarding
-			packet, err := p.toServer.trans.readPacket()
+			packet, err := p.toServerTransport.readPacket()
 			if err != nil {
 				forwardingDone <- err
 				break
@@ -189,7 +146,7 @@ func (p *proxy) Run() <-chan error {
 			msg, err := decode(packet)
 			log.Printf("Got message %d from server: %s", packet[0], reflect.TypeOf(msg))
 
-			err = p.toClient.trans.writePacket(packet)
+			err = p.toClientTransport.writePacket(packet)
 			if err != nil {
 				forwardingDone <- err
 				break
@@ -220,5 +177,5 @@ func (p *proxy) Run() <-chan error {
 }
 
 func (p *proxy) BufferedFromServer() int {
-	return p.toServer.trans.buffered()
+	return p.toServerTransport.buffered()
 }

@@ -19,7 +19,6 @@ func NewPolicy(u string, c string, s string) *Policy {
 }
 
 func (pc *Policy) AskForApproval() error {
-	log.Printf("AskForApproval")
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
@@ -27,7 +26,6 @@ func (pc *Policy) AskForApproval() error {
 		log.Printf("\nApprove '%s' on %s by %s? [y/n]:\n", pc.Command, pc.Server, pc.User)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
-		log.Printf("Got Response: '%s'", text)
 	}
 
 	var err error

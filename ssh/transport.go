@@ -13,7 +13,7 @@ import (
 
 // debugTransport if set, will print packet types as they go over the
 // wire. No message decoding is done, to minimize the impact on timing.
-const debugTransport = false
+const debugTransport = true
 
 const (
 	gcmCipherID    = "aes128-gcm@openssh.com"
