@@ -13,10 +13,11 @@ type Policy struct {
 	Command string
 	Server  string
 	SessionOpened bool
+	NoMoreSessions bool
 }
 
 func NewPolicy(u string, c string, s string) *Policy {
-	return &Policy{User: u, Command: c, Server: s, SessionOpened: false}
+	return &Policy{User: u, Command: c, Server: s, SessionOpened: false, NoMoreSessions: false}
 }
 
 func (pc *Policy) AskForApproval() error {
@@ -52,6 +53,13 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, er
 			pc.SessionOpened = true
 		}
 		return true, nil, nil
+	case *globalRequestMsg:
+		if msg.Type != NoMoreSessionRequestName {
+			return false, Marshal(globalRequestFailureMsg{}), nil
+		} else {
+			pc.NoMoreSessions = true
+		}
+		return true, nil, nil
 	case *channelRequestMsg:
 		if msg.Request != "exec" {
 			log.Printf("Channel request %s blocked (only 'exec' is allowed)", msg.Request)
@@ -67,6 +75,12 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, er
 			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
 		log.Printf("Succesfully validated channelRequest for: %s", execReq.Command)
+		return true, nil, nil
+	case *kexInitMsg:
+		if !pc.NoMoreSessions {
+			log.Printf("Requested kexInit without first sending no more sessions.")
+			return false, Marshal(disconnectMsg{Reason: 3, Message: "Must request no-more-sessions request before requesting Kex"}), nil
+		}
 		return true, nil, nil
 	default:
 		return true, nil, nil
