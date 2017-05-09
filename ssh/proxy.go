@@ -62,7 +62,7 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 	}
 
 	toServerSessionID := toServerTransport.getSessionID()
-
+	log.Printf("Connected to server successfully")
 	toServerConn := &connection{transport: toServerTransport}
 	err = toServerConn.clientAuthenticate(clientConfig)
 	if err != nil {
