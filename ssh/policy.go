@@ -13,7 +13,7 @@ type Policy struct {
 	Command 	   string
 	Server  	   string
 	SessionOpened  bool
-	NoMoreSessions bool
+	// NoMoreSessions bool
 }
 
 func NewPolicy(u string, c string, s string) *Policy {
@@ -49,14 +49,14 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, er
 	case *channelOpenMsg:
 		if msg.ChanType != "session" || pc.SessionOpened {
 			return false, Marshal(channelOpenFailureMsg{}), nil
-		} else {
-			pc.SessionOpened = true
+		// } else {
+		// 	pc.SessionOpened = true
 		}
 		return true, nil, nil
-	case *globalRequestMsg:
-		log.Print("HERERERE")
-		os.Exit(0)
-		return true, nil, nil
+	// case *globalRequestMsg:
+	// 	log.Print("HERERERE")
+	// 	os.Exit(0)
+	// 	return true, nil, nil
 	case *channelRequestMsg:
 		if msg.Request != "exec" {
 			log.Printf("Channel request %s blocked (only 'exec' is allowed)", msg.Request)
