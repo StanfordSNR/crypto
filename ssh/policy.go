@@ -9,13 +9,15 @@ import (
 )
 
 type Policy struct {
-	User    string
-	Command string
-	Server  string
+	User    	   string
+	Command 	   string
+	Server  	   string
+	SessionOpened  bool
+	NoMoreSessions bool
 }
 
 func NewPolicy(u string, c string, s string) *Policy {
-	return &Policy{User: u, Command: c, Server: s}
+	return &Policy{User: u, Command: c, Server: s, SessionOpened: false}
 }
 
 func (pc *Policy) AskForApproval() error {
@@ -26,7 +28,6 @@ func (pc *Policy) AskForApproval() error {
 		log.Printf("\nApprove '%s' on %s by %s? [y/n]:\n", pc.Command, pc.Server, pc.User)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
-		fmt.Printf("Response: %s", text)
 	}
 
 	var err error
@@ -44,9 +45,15 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, er
 
 	switch msg := decoded.(type) {
 	case *channelOpenMsg:
-		if msg.ChanType != "session" {
+		if msg.ChanType != "session" || pc.SessionOpened {
 			return false, Marshal(channelOpenFailureMsg{}), nil
+		} else {
+			pc.SessionOpened = true
 		}
+		return true, nil, nil
+	case *globalRequestMsg:
+		log.Print("HERERERE")
+		os.Exit(0)
 		return true, nil, nil
 	case *channelRequestMsg:
 		if msg.Request != "exec" {
