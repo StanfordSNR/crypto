@@ -12,10 +12,11 @@ type Policy struct {
 	User    string
 	Command string
 	Server  string
+	SessionOpened bool
 }
 
 func NewPolicy(u string, c string, s string) *Policy {
-	return &Policy{User: u, Command: c, Server: s}
+	return &Policy{User: u, Command: c, Server: s, SessionOpened: false}
 }
 
 func (pc *Policy) AskForApproval() error {
@@ -45,8 +46,10 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, er
 
 	switch msg := decoded.(type) {
 	case *channelOpenMsg:
-		if msg.ChanType != "session" {
+		if msg.ChanType != "session" || pc.SessionOpened {
 			return false, Marshal(channelOpenFailureMsg{}), nil
+		} else {
+			pc.SessionOpened = true
 		}
 		return true, nil, nil
 	case *channelRequestMsg:
