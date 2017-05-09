@@ -229,6 +229,8 @@ type channelEOFMsg struct {
 }
 
 // See RFC 4254, section 4
+const NoMoreSessionRequestName = "no-more-sessions@openssh.com"
+
 const msgGlobalRequest = 80
 
 type globalRequestMsg struct {

@@ -127,7 +127,6 @@ func (p *proxy) UpdateClientSessionParams() error {
 }
 
 // don't allow key exchange before channel has been opened -- no more sessions
-
 func (p *proxy) Run() <-chan error {
 	forwardingDone := make(chan error, 2)
 	var err error
