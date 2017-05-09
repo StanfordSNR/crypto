@@ -164,6 +164,8 @@ func (m *mux) SendRequest(name string, wantReply bool, payload []byte) (bool, []
 		return false, msg.Data, nil
 	case *globalRequestSuccessMsg:
 		return true, msg.Data, nil
+	case *unimplementedMsg:
+		return false, nil, nil
 	default:
 		return false, nil, fmt.Errorf("ssh: unexpected response to request: %#v", msg)
 	}
@@ -229,7 +231,7 @@ func (m *mux) onePacket() error {
 	switch packet[0] {
 	case msgChannelOpen:
 		return m.handleChannelOpen(packet)
-	case msgGlobalRequest, msgRequestSuccess, msgRequestFailure:
+	case msgGlobalRequest, msgRequestSuccess, msgRequestFailure, msgUnimplemented:
 		return m.handleGlobalPacket(packet)
 	}
 
@@ -240,7 +242,7 @@ func (m *mux) onePacket() error {
 	id := binary.BigEndian.Uint32(packet[1:])
 	ch := m.chanList.getChan(id)
 	if ch == nil {
-		return fmt.Errorf("ssh: invalid channel %d", id)
+		return fmt.Errorf("ssh: invalid channel %d in msg: %d", id, packet[0])
 	}
 
 	return ch.handlePacket(packet)
@@ -261,6 +263,8 @@ func (m *mux) handleGlobalPacket(packet []byte) error {
 			mux:       m,
 		}
 	case *globalRequestSuccessMsg, *globalRequestFailureMsg:
+		m.globalResponses <- msg
+	case *unimplementedMsg:
 		m.globalResponses <- msg
 	default:
 		panic(fmt.Sprintf("not a global message %#v", msg))

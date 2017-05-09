@@ -267,6 +267,14 @@ type userAuthPubKeyOkMsg struct {
 	PubKey []byte
 }
 
+type newKeysMsg struct {
+	Data []byte `ssh:"rest" sshtype:"21"`
+}
+
+type unimplementedMsg struct {
+	PacketSeqNum uint32 `ssh:"rest" sshtype:"3"`
+}
+
 // typeTags returns the possible type bytes for the given reflect.Type, which
 // should be a struct. The possible values are separated by a '|' character.
 func typeTags(structType reflect.Type) (tags []byte) {
@@ -748,6 +756,10 @@ func decode(packet []byte) (interface{}, error) {
 		msg = new(channelRequestSuccessMsg)
 	case msgChannelFailure:
 		msg = new(channelRequestFailureMsg)
+	case msgNewKeys:
+		msg = new(newKeysMsg)
+	case msgUnimplemented:
+		msg = new(unimplementedMsg)
 	default:
 		return nil, unexpectedMessageError(0, packet[0])
 	}
