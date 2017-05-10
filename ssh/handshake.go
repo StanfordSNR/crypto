@@ -175,7 +175,7 @@ func (t *handshakeTransport) updateSessionParams(sessionID []byte, outSeqNum uin
 
 	oldOut, oldIn := t.getSequenceNumbers()
 
-	t.pendingSeqNumDelta = inSeqNum - oldIn - 1 // Off by one because of the update packets themselves
+	t.pendingSeqNumDelta = inSeqNum - oldIn
 
 	err := t.pushPacket(
 		Marshal(globalRequestMsg{
@@ -183,7 +183,7 @@ func (t *handshakeTransport) updateSessionParams(sessionID []byte, outSeqNum uin
 			WantReply: false, // Don't use the standard request confirmation mechanism
 			Data: Marshal(updateSessionParams{
 				DeltaC2S:  t.pendingSeqNumDelta,
-				DeltaS2C:  outSeqNum - oldOut - 1,
+				DeltaS2C:  outSeqNum - oldOut - 1, // Off by one because of the update packet itself
 				SessionID: sessionID,
 			}),
 		}))
@@ -277,7 +277,7 @@ func (t *handshakeTransport) readLoop() {
 			close(t.incoming)
 			break
 		}
-		if p[0] == msgIgnore || p[0] == msgDebug {
+		if t.responsibleForKex && len(p) >= 0 && (p[0] == msgDebug || p[0] == msgIgnore) {
 			continue
 		}
 		t.incoming <- p

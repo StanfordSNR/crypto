@@ -3,16 +3,17 @@ package ssh
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strings"
 )
 
 type Policy struct {
-	User    string
-	Command string
-	Server  string
-	SessionOpened bool
+	User           string
+	Command        string
+	Server         string
+	SessionOpened  bool
 	NoMoreSessions bool
 }
 
@@ -21,15 +22,13 @@ func NewPolicy(u string, c string, s string) *Policy {
 }
 
 func (pc *Policy) AskForApproval() error {
-	log.Printf("AskForApproval")
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
 	for text != "y" && text != "n" {
-		log.Printf("\nApprove '%s' on %s by %s? [y/n]:\n", pc.Command, pc.Server, pc.User)
+		fmt.Printf("Approve '%s' on %s by %s? [y/n]: ", pc.Command, pc.Server, pc.User)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
-		log.Printf("Got Response: '%s'", text)
 	}
 
 	var err error
@@ -57,6 +56,9 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, er
 		if msg.Type != NoMoreSessionRequestName {
 			return false, Marshal(globalRequestFailureMsg{}), nil
 		} else {
+			if debugProxy {
+				log.Printf("Client sent no-more-sessions")
+			}
 			pc.NoMoreSessions = true
 		}
 		return true, nil, nil
@@ -74,7 +76,6 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, er
 			log.Printf("Unexpected command: %s, (expecting: %s)", execReq.Command, pc.Command)
 			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
-		log.Printf("Succesfully validated channelRequest for: %s", execReq.Command)
 		return true, nil, nil
 	case *kexInitMsg:
 		if !pc.NoMoreSessions {

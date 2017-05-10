@@ -134,14 +134,9 @@ func (t *transport) printPacket(p []byte, write bool) {
 
 // Read and decrypt next packet.
 func (t *transport) readPacket() (p []byte, err error) {
-	for {
-		p, err = t.reader.readPacket(t.bufReader)
-		if err != nil {
-			break
-		}
-		if len(p) == 0 || (p[0] != msgIgnore && p[0] != msgDebug) {
-			break
-		}
+	p, err = t.reader.readPacket(t.bufReader)
+	if err != nil {
+		return
 	}
 	if debugTransport {
 		t.printPacket(p, false)

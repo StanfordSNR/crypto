@@ -6,6 +6,8 @@ import (
 	"reflect"
 )
 
+const debugProxy = false
+
 type side struct {
 	conn      net.Conn
 	trans     *handshakeTransport
@@ -37,13 +39,17 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("Read version: \"%s\" from server", serverVersion)
+	if debugProxy {
+		log.Printf("Read version: \"%s\" from server", serverVersion)
+	}
 
 	clientVersion, err := exchangeVersions(toClient, serverVersion)
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("Read version: \"%s\" from client", clientVersion)
+	if debugProxy {
+		log.Printf("Read version: \"%s\" from client", clientVersion)
+	}
 
 	// Connect to server
 	clientConfig.SetDefaults()
@@ -62,7 +68,9 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 	}
 
 	toServerSessionID := toServerTransport.getSessionID()
-	log.Printf("Connected to server successfully")
+	if debugProxy {
+		log.Printf("Connected to server successfully")
+	}
 	toServerConn := &connection{transport: toServerTransport}
 	err = toServerConn.clientAuthenticate(clientConfig)
 	if err != nil {
@@ -96,10 +104,14 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 	}
 
 	doneWithKex = make(chan struct{})
-	log.Printf("stopping  Kex")
+	if debugProxy {
+		log.Printf("Stopping Kex")
+	}
 	toClientTransport.stopKexHandling(doneWithKex)
 	<-doneWithKex
-	log.Printf("Done with Kex")
+	if debugProxy {
+		log.Printf("Done with Kex")
+	}
 
 	return &proxy{
 		toClient:   side{toClient, toClientTransport, toClientSessionID},
@@ -111,7 +123,9 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 }
 
 func (p *proxy) UpdateClientSessionParams() error {
-	log.Printf("UpdateClientSessionParams begin")
+	if debugProxy {
+		log.Printf("UpdateClientSessionParams begin")
+	}
 	sessionID := p.toServer.trans.getSessionID()
 	p2s, s2p := p.toServer.trans.getSequenceNumbers()
 
@@ -121,7 +135,9 @@ func (p *proxy) UpdateClientSessionParams() error {
 		log.Printf("Failed to send updateClientSessionParams")
 		return err
 	}
-	log.Printf("UpdateClientSessionParams Complete")
+	if debugProxy {
+		log.Printf("UpdateClientSessionParams Complete")
+	}
 
 	return nil
 }
@@ -141,7 +157,9 @@ func (p *proxy) Run() <-chan error {
 
 			msgNum := packet[0]
 			msg, err := decode(packet)
-			log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
+			if debugProxy {
+				log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
+			}
 
 			allowed, response, err := p.filterCB(packet)
 			if err != nil {
@@ -150,24 +168,26 @@ func (p *proxy) Run() <-chan error {
 			}
 			if !allowed {
 				log.Printf("Packet from client to server blocked")
-				// TODO(dimakogan): nee to forge a response back to the client to announce the failure,
-				// and to conform to the protocol.
 				if err = p.toClient.trans.writePacket(response); err != nil {
 					break
 				}
-				continue
+				// Send a msgIgnore instead to keep sequence numbers aligned
+				p.toServer.trans.writePacket([]byte{msgIgnore})
 			}
 			// Packet allowed message, forwarding it.
 			err = p.toServer.trans.writePacket(packet)
 			if err != nil {
 				break
 			}
-			// _, in := p.toClient.trans.getSequenceNumbers()
-			// out, _ := p.toServer.trans.getSequenceNumbers()
-			//log.Printf("Forwarded seqNum: %d from client to server as: %d", in-1, out-1)
-
+			_, in := p.toClient.trans.getSequenceNumbers()
+			out, _ := p.toServer.trans.getSequenceNumbers()
+			if debugProxy {
+				log.Printf("Forwarded seqNum: %d from client to server as: %d", in-1, out-1)
+			}
 			if msgNum == msgNewKeys {
-				log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
+				if debugProxy {
+					log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
+				}
 				break
 			}
 
@@ -186,18 +206,24 @@ func (p *proxy) Run() <-chan error {
 
 			msgNum := packet[0]
 			msg, err := decode(packet)
-			log.Printf("Got message %d from server: %s", packet[0], reflect.TypeOf(msg))
 
+			if debugProxy {
+				log.Printf("Got message %d from server: %s", packet[0], reflect.TypeOf(msg))
+			}
 			err = p.toClient.trans.writePacket(packet)
 			if err != nil {
 				forwardingDone <- err
 				break
 			}
-			// out, _ := p.toClient.trans.getSequenceNumbers()
-			// _, in := p.toServer.trans.getSequenceNumbers()
-			// log.Printf("Forwarded seqNum: %d from server to client as: %d", in-1, out-1)
+			out, _ := p.toClient.trans.getSequenceNumbers()
+			_, in := p.toServer.trans.getSequenceNumbers()
+			if debugProxy {
+				log.Printf("Forwarded seqNum: %d from server to client as: %d", in-1, out-1)
+			}
 			if msgNum == msgNewKeys {
-				log.Printf("Got msgNewKeys from server, finishing server->client forwarding")
+				if debugProxy {
+					log.Printf("Got msgNewKeys from server, finishing server->client forwarding")
+				}
 				forwardingDone <- nil
 				break
 			}

@@ -277,6 +277,16 @@ type unimplementedMsg struct {
 	PacketSeqNum uint32 `ssh:"rest" sshtype:"3"`
 }
 
+type debugMsg struct {
+	AlwaysDisplay bool `sshtype:"4"`
+	Message       string
+	LanguageTag   string
+}
+
+type ignoreMsg struct {
+	Ignore [0]byte `sshtype:"2"`
+}
+
 // typeTags returns the possible type bytes for the given reflect.Type, which
 // should be a struct. The possible values are separated by a '|' character.
 func typeTags(structType reflect.Type) (tags []byte) {
@@ -762,6 +772,10 @@ func decode(packet []byte) (interface{}, error) {
 		msg = new(newKeysMsg)
 	case msgUnimplemented:
 		msg = new(unimplementedMsg)
+	case msgDebug:
+		msg = new(debugMsg)
+	case msgIgnore:
+		msg = new(ignoreMsg)
 	default:
 		return nil, unexpectedMessageError(0, packet[0])
 	}
