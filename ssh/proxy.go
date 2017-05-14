@@ -6,7 +6,7 @@ import (
 	"reflect"
 )
 
-const debugProxy = false
+const debugProxy = true
 
 type side struct {
 	conn      net.Conn
@@ -27,12 +27,13 @@ type proxy struct {
 	clientConf *ClientConfig
 	serverConf ServerConfig
 
-	filterCB MessageFilterCallback
+	filterCCB MessageFilterCallback
+	filterSCB MessageFilterCallback
 }
 
 type MessageFilterCallback func(p []byte) (isOK bool, response []byte, err error)
 
-func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, filterCB MessageFilterCallback) (ProxyConn, error) {
+func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, filterCCB MessageFilterCallback, filterSCB MessageFilterCallback) (ProxyConn, error) {
 	var err error
 
 	serverVersion, err := readVersion(toServer)
@@ -118,7 +119,8 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 		toServer:   side{toServer, toServerTransport, toServerSessionID},
 		clientConf: clientConfig,
 		serverConf: serverConf,
-		filterCB:   filterCB,
+		filterCCB:  filterCCB,
+		filterSCB:	filterSCB,
 	}, nil
 }
 
@@ -161,9 +163,9 @@ func (p *proxy) Run() <-chan error {
 				log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
 			}
 
-			allowed, response, err := p.filterCB(packet)
+			allowed, response, err := p.filterCCB(packet)
 			if err != nil {
-				log.Printf("Got error from packet filter: %s", err)
+				log.Printf("Got error from client packet filter: %s", err)
 				break
 			}
 			if !allowed {
@@ -210,6 +212,20 @@ func (p *proxy) Run() <-chan error {
 			if debugProxy {
 				log.Printf("Got message %d from server: %s", packet[0], reflect.TypeOf(msg))
 			}
+
+			validState, response, err := p.filterSCB(packet)
+			if err != nil {
+				log.Printf("Got error from server packet filter: %s", err)
+				break
+			}
+			if !validState {
+				log.Printf("Packet from server to client ends connection")
+				if err = p.toClient.trans.writePacket(response); err != nil {
+					break
+				}
+				// No need to send a msgIgnore for seq # since server->client msg was blocked
+			}
+
 			err = p.toClient.trans.writePacket(packet)
 			if err != nil {
 				forwardingDone <- err

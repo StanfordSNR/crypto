@@ -10,15 +10,17 @@ import (
 )
 
 type Policy struct {
-	User           string
-	Command        string
-	Server         string
-	SessionOpened  bool
-	NoMoreSessions bool
+	User             string
+	Command          string
+	Server           string
+	SessionOpened    bool
+	NoMoreSessions   bool
+	AwaitingNMSReply bool
 }
 
 func NewPolicy(u string, c string, s string) *Policy {
-	return &Policy{User: u, Command: c, Server: s, SessionOpened: false, NoMoreSessions: false}
+	return &Policy{User: u, Command: c, Server: s, SessionOpened: false, NoMoreSessions: false,
+		AwaitingNMSReply: false}
 }
 
 func (pc *Policy) AskForApproval() error {
@@ -38,7 +40,32 @@ func (pc *Policy) AskForApproval() error {
 	return err
 }
 
-func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, err error) {
+func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response []byte, err error) {
+	decoded, err := decode(packet)
+	if err != nil {
+		return true, nil, err
+	}
+
+	if pc.NoMoreSessions && pc.AwaitingNMSReply {
+		switch decoded.(type) {
+		case *globalRequestSuccessMsg:
+			if debugProxy {
+				log.Printf("Server sent no-more-sessions success.")
+			}
+			pc.AwaitingNMSReply = false
+			return true, nil, nil
+		case *globalRequestFailureMsg:
+			if debugProxy {
+				log.Printf("Server sent no-more-sessions failure.")
+			}
+			pc.AwaitingNMSReply = false
+			return false, Marshal(disconnectMsg{Reason: 3, Message: "no-more-sessions not supported by server"}), nil
+		}
+	}
+	return true, nil, nil
+}
+
+func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []byte, err error) {
 	decoded, err := decode(packet)
 	if err != nil {
 		return false, nil, err
@@ -60,6 +87,7 @@ func (pc *Policy) FilterPacket(packet []byte) (allowed bool, response []byte, er
 				log.Printf("Client sent no-more-sessions")
 			}
 			pc.NoMoreSessions = true
+			pc.AwaitingNMSReply = true
 		}
 		return true, nil, nil
 	case *channelRequestMsg:
