@@ -216,6 +216,7 @@ func (p *proxy) Run() <-chan error {
 			validState, response, err := p.filterServerCB(packet)
 			if err != nil {
 				log.Printf("Got error from server packet filter: %s", err)
+				p.toClient.trans.writePacket(response)
 				break
 			}
 			if !validState {

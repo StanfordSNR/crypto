@@ -79,7 +79,8 @@ potentially run all commands on %s. Proceed? [y/n]:
 func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response []byte, err error) {
 	decoded, err := decode(packet)
 	if err != nil {
-		return true, nil, err
+		// (dimakogan) unclear to me why 95 is error number on unknown commands. might deserve more work
+		return true, Marshal(disconnectMsg{Reason: 7, Message: "Received error from server."}), err
 	}
 
 	if pc.NoMoreSessions && pc.AwaitingNMSReply {
@@ -100,7 +101,7 @@ func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response [
 			// I would argue yes, otherwise we break abstraction barrier
 			if !pc.ApprovedAllCommands {
 				if proceed := pc.EscalateApproval(); proceed != nil {
-					return false, Marshal(disconnectMsg{Reason: 3, Message: "Policy rejected command execution (no-more-sessions failed)."}), nil
+					return false, Marshal(disconnectMsg{Reason: 1, Message: "Policy rejected command execution (no-more-sessions failed)."}), nil
 				}
 			}
 			return true, nil, nil
@@ -152,7 +153,7 @@ func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []by
 	case *kexInitMsg:
 		if !pc.NoMoreSessions {
 			log.Printf("Requested kexInit without first sending no more sessions.")
-			return false, Marshal(disconnectMsg{Reason: 3, Message: "Must request no-more-sessions request before requesting Kex"}), nil
+			return false, Marshal(disconnectMsg{Reason: 2, Message: "Must request no-more-sessions request before requesting Kex"}), nil
 		}
 		return true, nil, nil
 	default:
