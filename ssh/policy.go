@@ -24,7 +24,9 @@ func NewPolicy(u string, c string, s string) *Policy {
 		SessionOpened: false, NoMoreSessions: false, AwaitingNMSReply: false}
 }
 
-func (pc *Policy) AskForApproval() error {
+type policyID func(pc *Policy) ([32]byte)
+
+func (pc *Policy) AskForApproval(store map[[32]byte]bool, makeKey policyID) error {
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
@@ -44,7 +46,9 @@ func (pc *Policy) AskForApproval() error {
 	}
 	if text == "a" {
 		pc.ApprovedAllCommands = true
-		// Store Server/User/Client Policy Approval on agent
+		// To be changed to include client if we move to one agent total vs one agent per conn
+		// similarly, if we remember single commands
+		store[makeKey(pc)] = true
 		return err
 	}
 	return err
@@ -67,7 +71,8 @@ potentially run all commands on %s. Proceed? [y/n]:
 		err = errors.New("Policy rejected approval escalation")
 	}
 	// (dimakogan) store escalation if 'y' --> pro: it is equivalent to saying yes+all,
-	// con: server impl may change, asking over and over may serve a purpose
+	// con: server impl may change, asking over and over may serve a purpose.
+	// Must change UX to explain consequence if we change it.
 	return err	
 }
 
@@ -90,7 +95,7 @@ func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response [
 				log.Printf("Server sent no-more-sessions failure.")
 			}
 			pc.AwaitingNMSReply = false
-			
+
 			// (dimakogan) should we enforce asking for nms if all commands approved?
 			// I would argue yes, otherwise we break abstraction barrier
 			if !pc.ApprovedAllCommands {
