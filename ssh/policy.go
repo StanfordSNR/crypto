@@ -10,25 +10,30 @@ import (
 )
 
 type Policy struct {
-	User             string
-	Command          string
-	Server           string
-	SessionOpened    bool
-	NoMoreSessions   bool
-	AwaitingNMSReply bool
+	User                string
+	Command             string
+	Server              string
+	ApprovedAllCommands bool
+	SessionOpened       bool
+	NoMoreSessions      bool
+	AwaitingNMSReply    bool
 }
 
 func NewPolicy(u string, c string, s string) *Policy {
-	return &Policy{User: u, Command: c, Server: s, SessionOpened: false, NoMoreSessions: false,
-		AwaitingNMSReply: false}
+	return &Policy{User: u, Command: c, Server: s,
+		SessionOpened: false, NoMoreSessions: false, AwaitingNMSReply: false}
 }
 
 func (pc *Policy) AskForApproval() error {
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
-	for text != "y" && text != "n" {
-		fmt.Printf("Approve '%s' on %s by %s? [y/n]: ", pc.Command, pc.Server, pc.User)
+	for text != "y" && text != "n" && text != "a" {
+		// if with wrapper, approval can be done only for session?
+		fmt.Printf(`Approve running '%s' once on %s by %s? [y/n]
+(you can also approve all commands for %s on %s for this session) [a]:
+`,
+		pc.Command, pc.Server, pc.User, pc.User, pc.Server)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
 	}
@@ -37,7 +42,33 @@ func (pc *Policy) AskForApproval() error {
 	if text == "n" {
 		err = errors.New("Policy rejected client request")
 	}
+	if text == "a" {
+		pc.ApprovedAllCommands = true
+		// Store Server/User/Client Policy Approval on agent
+		return err
+	}
 	return err
+}
+
+func (pc *Policy) EscalateApproval() error {
+	reader := bufio.NewReader(os.Stdin)
+	var text string
+	// switch to regex
+	for text != "y" && text != "n" {
+		fmt.Printf(`Approving '%s' on %s by %s will enable the client to 
+potentially run all commands on %s. Proceed? [y/n]:
+`, pc.Command, pc.Server, pc.User, pc.Server)
+		text, _ = reader.ReadString('\n')
+		text = strings.ToLower(strings.Trim(text, " \r\n"))
+	}
+
+	var err error
+	if text == "n" {
+		err = errors.New("Policy rejected approval escalation")
+	}
+	// (dimakogan) store escalation if 'y' --> pro: it is equivalent to saying yes+all,
+	// con: server impl may change, asking over and over may serve a purpose
+	return err	
 }
 
 func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response []byte, err error) {
@@ -59,7 +90,15 @@ func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response [
 				log.Printf("Server sent no-more-sessions failure.")
 			}
 			pc.AwaitingNMSReply = false
-			return false, Marshal(disconnectMsg{Reason: 3, Message: "no-more-sessions not supported by server"}), nil
+			
+			// (dimakogan) should we enforce asking for nms if all commands approved?
+			// I would argue yes, otherwise we break abstraction barrier
+			if !pc.ApprovedAllCommands {
+				if proceed := pc.EscalateApproval(); proceed != nil {
+					return false, Marshal(disconnectMsg{Reason: 3, Message: "Policy rejected command execution (no-more-sessions failed)."}), nil
+				}
+			}
+			return true, nil, nil
 		}
 	}
 	return true, nil, nil

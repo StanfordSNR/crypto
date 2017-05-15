@@ -27,8 +27,8 @@ type proxy struct {
 	clientConf *ClientConfig
 	serverConf ServerConfig
 
-	filterCCB MessageFilterCallback
-	filterSCB MessageFilterCallback
+	filterClientCB MessageFilterCallback
+	filterServerCB MessageFilterCallback
 }
 
 type MessageFilterCallback func(p []byte) (isOK bool, response []byte, err error)
@@ -115,12 +115,12 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 	}
 
 	return &proxy{
-		toClient:   side{toClient, toClientTransport, toClientSessionID},
-		toServer:   side{toServer, toServerTransport, toServerSessionID},
-		clientConf: clientConfig,
-		serverConf: serverConf,
-		filterCCB:  filterCCB,
-		filterSCB:	filterSCB,
+		toClient:       side{toClient, toClientTransport, toClientSessionID},
+		toServer:       side{toServer, toServerTransport, toServerSessionID},
+		clientConf:     clientConfig,
+		serverConf:     serverConf,
+		filterClientCB: filterCCB,
+		filterServerCB:	filterSCB,
 	}, nil
 }
 
@@ -163,7 +163,7 @@ func (p *proxy) Run() <-chan error {
 				log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
 			}
 
-			allowed, response, err := p.filterCCB(packet)
+			allowed, response, err := p.filterClientCB(packet)
 			if err != nil {
 				log.Printf("Got error from client packet filter: %s", err)
 				break
@@ -213,7 +213,7 @@ func (p *proxy) Run() <-chan error {
 				log.Printf("Got message %d from server: %s", packet[0], reflect.TypeOf(msg))
 			}
 
-			validState, response, err := p.filterSCB(packet)
+			validState, response, err := p.filterServerCB(packet)
 			if err != nil {
 				log.Printf("Got error from server packet filter: %s", err)
 				break
