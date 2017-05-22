@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"golang.org/x/crypto/sha3"
 )
 
 type Policy struct {
@@ -19,6 +20,10 @@ type Policy struct {
 	AwaitingNMSReply    bool
 }
 
+func (pc *Policy) GetPolicyID() (hash [32]byte) {
+	return sha3.Sum256([]byte(pc.User + "||" + pc.Server))
+} 
+
 func NewPolicy(u string, c string, s string) *Policy {
 	return &Policy{User: u, Command: c, Server: s,
 		SessionOpened: false, NoMoreSessions: false, AwaitingNMSReply: false}
@@ -26,7 +31,7 @@ func NewPolicy(u string, c string, s string) *Policy {
 
 type policyID func(pc *Policy) ([32]byte)
 
-func (pc *Policy) AskForApproval(store map[[32]byte]bool, makeKey policyID) error {
+func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
@@ -48,7 +53,7 @@ func (pc *Policy) AskForApproval(store map[[32]byte]bool, makeKey policyID) erro
 		pc.ApprovedAllCommands = true
 		// To be changed to include client if we move to one agent total vs one agent per conn
 		// similarly, if we remember single commands
-		store[makeKey(pc)] = true
+		store[pc.GetPolicyID()] = true
 		return err
 	}
 	return err
@@ -151,7 +156,7 @@ func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []by
 		}
 		return true, nil, nil
 	case *kexInitMsg:
-		if !pc.NoMoreSessions {
+		if !pc.NoMoreSessions || pc.AwaitingNMSReply {
 			log.Printf("Requested kexInit without first sending no more sessions.")
 			return false, Marshal(disconnectMsg{Reason: 2, Message: "Must request no-more-sessions request before requesting Kex"}), nil
 		}
