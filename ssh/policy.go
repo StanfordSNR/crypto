@@ -10,14 +10,20 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+const (
+	Inactive = iota
+	AwaitingReply
+	Success
+	Failure
+)
+
 type Policy struct {
 	User                string
 	Command             string
 	Server              string
 	ApprovedAllCommands bool
 	SessionOpened       bool
-	NoMoreSessions      bool
-	AwaitingNMSReply    bool
+	NMSStatus			int
 }
 
 func (pc *Policy) GetPolicyID() (hash [32]byte) {
@@ -88,19 +94,19 @@ func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response [
 		return true, Marshal(disconnectMsg{Reason: 7, Message: "Received error from server."}), err
 	}
 
-	if pc.NoMoreSessions && pc.AwaitingNMSReply {
+	if pc.NMSStatus == AwaitingReply {
 		switch decoded.(type) {
 		case *globalRequestSuccessMsg:
 			if debugProxy {
 				log.Printf("Server sent no-more-sessions success.")
 			}
-			pc.AwaitingNMSReply = false
+			pc.NMSStatus = Success
 			return true, nil, nil
 		case *globalRequestFailureMsg:
 			if debugProxy {
 				log.Printf("Server sent no-more-sessions failure.")
 			}
-			pc.AwaitingNMSReply = false
+			pc.NMSStatus = Failure
 
 			// (dimakogan) should we enforce asking for nms if all commands approved?
 			// I would argue yes, otherwise we break abstraction barrier
@@ -136,8 +142,7 @@ func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []by
 			if debugProxy {
 				log.Printf("Client sent no-more-sessions")
 			}
-			pc.NoMoreSessions = true
-			pc.AwaitingNMSReply = true
+			pc.NMSStatus = AwaitingReply
 		}
 		return true, nil, nil
 	case *channelRequestMsg:
