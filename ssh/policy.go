@@ -7,6 +7,14 @@ import (
 	"log"
 	"os"
 	"strings"
+	"golang.org/x/crypto/sha3"
+)
+
+const (
+	Inactive = iota
+	AwaitingReply
+	Success
+	Failure
 )
 
 type Policy struct {
@@ -15,18 +23,21 @@ type Policy struct {
 	Server              string
 	ApprovedAllCommands bool
 	SessionOpened       bool
-	NoMoreSessions      bool
-	AwaitingNMSReply    bool
+	NMSStatus			int
 }
+
+func (pc *Policy) GetPolicyID() (hash [32]byte) {
+	return sha3.Sum256([]byte(pc.User + "||" + pc.Server))
+} 
 
 func NewPolicy(u string, c string, s string) *Policy {
 	return &Policy{User: u, Command: c, Server: s,
-		SessionOpened: false, NoMoreSessions: false, AwaitingNMSReply: false}
+		SessionOpened: false, NMSStatus: Inactive}
 }
 
 type policyID func(pc *Policy) [32]byte
 
-func (pc *Policy) AskForApproval(store map[[32]byte]bool, makeKey policyID) error {
+func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
@@ -46,7 +57,7 @@ func (pc *Policy) AskForApproval(store map[[32]byte]bool, makeKey policyID) erro
 		pc.ApprovedAllCommands = true
 		// To be changed to include client if we move to one agent total vs one agent per conn
 		// similarly, if we remember single commands
-		store[makeKey(pc)] = true
+		store[pc.GetPolicyID()] = true
 		return err
 	}
 	return err
@@ -57,7 +68,7 @@ func (pc *Policy) EscalateApproval() error {
 	var text string
 	// switch to regex
 	for text != "y" && text != "n" {
-		fmt.Printf(`Allow handoff of connection %s@%s. This will enable the client to potentially run any other command? [y/n]:`, pc.User, pc.Server)
+		fmt.Printf(`Allow handoff of connection %s@%s? This will enable the client to potentially run any other command on this server. [y/n]:`, pc.User, pc.Server)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
 	}
@@ -73,7 +84,7 @@ func (pc *Policy) EscalateApproval() error {
 }
 
 func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response []byte, err error) {
-	if !pc.AwaitingNMSReply {
+	if pc.NMSStatus != AwaitingReply {
 		return true, nil, nil
 	}
 
@@ -82,13 +93,12 @@ func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response [
 		if debugProxy {
 			log.Printf("Server approved no-more-sessions.")
 		}
-		pc.AwaitingNMSReply = false
-		pc.NoMoreSessions = true
+		pc.NMSStatus = Success
 	case msgRequestFailure:
 		if debugProxy {
 			log.Printf("Server sent no-more-sessions failure.")
 		}
-		pc.AwaitingNMSReply = false
+		pc.NMSStatus = Failure
 	}
 	return true, nil, nil
 }
@@ -114,7 +124,7 @@ func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []by
 			if debugProxy {
 				log.Printf("Client sent no-more-sessions")
 			}
-			pc.AwaitingNMSReply = true
+			pc.NMSStatus = AwaitingReply
 		}
 		return true, nil, nil
 	case *channelRequestMsg:
@@ -132,8 +142,8 @@ func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []by
 			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
 		return true, nil, nil
-	case *kexInitMsg:
-		if !pc.NoMoreSessions && !pc.ApprovedAllCommands {
+	case *kexInitMsg:		
+		if pc.NMSStatus != Success && !pc.ApprovedAllCommands {
 			log.Printf("Requested kexInit without first sending no more sessions.")
 			if err = pc.EscalateApproval(); err != nil {
 				return false, Marshal(disconnectMsg{Reason: 2, Message: "Must issue no-more-sessions before handoff"}), err
