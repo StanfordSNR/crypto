@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -16,6 +15,17 @@ const (
 	Success
 	Failure
 )
+
+type PolicyKey struct {
+	User	string
+	Server 	string
+}
+
+type PolicyScope struct {
+	AllCommands bool
+	Commands 	[]string
+}
+
 
 type Policy struct {
 	User                string
@@ -26,8 +36,8 @@ type Policy struct {
 	NMSStatus			int
 }
 
-func (pc *Policy) GetPolicyID() (hash [32]byte) {
-	return sha3.Sum256([]byte(pc.User + "||" + pc.Server))
+func (pc *Policy) GetPolicyKey() (PolicyKey) {
+	return PolicyKey{User: pc.User, Server: pc.Server}
 } 
 
 func NewPolicy(u string, c string, s string) *Policy {
@@ -35,9 +45,7 @@ func NewPolicy(u string, c string, s string) *Policy {
 		SessionOpened: false, NMSStatus: Inactive}
 }
 
-type policyID func(pc *Policy) [32]byte
-
-func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
+func (pc *Policy) AskForApproval(store map[PolicyKey]PolicyScope) error {
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
@@ -55,9 +63,9 @@ func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
 	}
 	if text == "a" {
 		pc.ApprovedAllCommands = true
-		// To be changed to include client if we move to one agent total vs one agent per conn
-		// similarly, if we remember single commands
-		store[pc.GetPolicyID()] = true
+		scope := store[pc.GetPolicyKey()]
+		scope.AllCommands = true
+		store[pc.GetPolicyKey()] = scope
 		return err
 	}
 	return err
