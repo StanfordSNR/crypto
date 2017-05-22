@@ -32,10 +32,10 @@ func (pc *Policy) GetPolicyID() (hash [32]byte) {
 
 func NewPolicy(u string, c string, s string) *Policy {
 	return &Policy{User: u, Command: c, Server: s,
-		SessionOpened: false, NoMoreSessions: false, AwaitingNMSReply: false}
+		SessionOpened: false, NMSStatus: Inactive}
 }
 
-type policyID func(pc *Policy) ([32]byte)
+type policyID func(pc *Policy) [32]byte
 
 func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
 	reader := bufio.NewReader(os.Stdin)
@@ -43,10 +43,8 @@ func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
 	// switch to regex
 	for text != "y" && text != "n" && text != "a" {
 		// if with wrapper, approval can be done only for session?
-		fmt.Printf(`Approve running '%s' once on %s by %s? [y/n]
-(you can also approve all commands for %s on %s for this session) [a]:
-`,
-		pc.Command, pc.Server, pc.User, pc.User, pc.Server)
+		fmt.Printf("Approve running '%s'/all commands once on %s@%s? [y/n/a]:",
+			pc.Command, pc.User, pc.Server)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
 	}
@@ -70,9 +68,7 @@ func (pc *Policy) EscalateApproval() error {
 	var text string
 	// switch to regex
 	for text != "y" && text != "n" {
-		fmt.Printf(`Approving '%s' on %s by %s will enable the client to 
-potentially run all commands on %s. Proceed? [y/n]:
-`, pc.Command, pc.Server, pc.User, pc.Server)
+		fmt.Printf(`Allow handoff of connection %s@%s? This will enable the client to potentially run any other command on this server. [y/n]:`, pc.User, pc.Server)
 		text, _ = reader.ReadString('\n')
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
 	}
@@ -84,39 +80,25 @@ potentially run all commands on %s. Proceed? [y/n]:
 	// (dimakogan) store escalation if 'y' --> pro: it is equivalent to saying yes+all,
 	// con: server impl may change, asking over and over may serve a purpose.
 	// Must change UX to explain consequence if we change it.
-	return err	
+	return err
 }
 
 func (pc *Policy) FilterServerPacket(packet []byte) (validState bool, response []byte, err error) {
-	decoded, err := decode(packet)
-	if err != nil {
-		// (dimakogan) unclear to me why 95 is error number on unknown commands. might deserve more work
-		return true, Marshal(disconnectMsg{Reason: 7, Message: "Received error from server."}), err
+	if pc.NMSStatus != AwaitingReply {
+		return true, nil, nil
 	}
 
-	if pc.NMSStatus == AwaitingReply {
-		switch decoded.(type) {
-		case *globalRequestSuccessMsg:
-			if debugProxy {
-				log.Printf("Server sent no-more-sessions success.")
-			}
-			pc.NMSStatus = Success
-			return true, nil, nil
-		case *globalRequestFailureMsg:
-			if debugProxy {
-				log.Printf("Server sent no-more-sessions failure.")
-			}
-			pc.NMSStatus = Failure
-
-			// (dimakogan) should we enforce asking for nms if all commands approved?
-			// I would argue yes, otherwise we break abstraction barrier
-			if !pc.ApprovedAllCommands {
-				if proceed := pc.EscalateApproval(); proceed != nil {
-					return false, Marshal(disconnectMsg{Reason: 1, Message: "Policy rejected command execution (no-more-sessions failed)."}), nil
-				}
-			}
-			return true, nil, nil
+	switch packet[0] {
+	case msgRequestSuccess:
+		if debugProxy {
+			log.Printf("Server approved no-more-sessions.")
 		}
+		pc.NMSStatus = Success
+	case msgRequestFailure:
+		if debugProxy {
+			log.Printf("Server sent no-more-sessions failure.")
+		}
+		pc.NMSStatus = Failure
 	}
 	return true, nil, nil
 }
@@ -160,10 +142,12 @@ func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []by
 			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
 		return true, nil, nil
-	case *kexInitMsg:
-		if !pc.NoMoreSessions || pc.AwaitingNMSReply {
+	case *kexInitMsg:		
+		if pc.NMSStatus != Success && !pc.ApprovedAllCommands {
 			log.Printf("Requested kexInit without first sending no more sessions.")
-			return false, Marshal(disconnectMsg{Reason: 2, Message: "Must request no-more-sessions request before requesting Kex"}), nil
+			if pc.EscalateApproval() != nil {
+				return false, Marshal(disconnectMsg{Reason: 2, Message: "Must issue no-more-sessions before handoff"}), nil
+			}
 		}
 		return true, nil, nil
 	default:
