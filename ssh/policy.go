@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"github.com/dimakogan/ssh/gossh/store"
 )
 
 const (
@@ -15,17 +16,6 @@ const (
 	Success
 	Failure
 )
-
-type PolicyKey struct {
-	User	string
-	Server 	string
-}
-
-type PolicyScope struct {
-	AllCommands bool
-	Commands 	[]string
-}
-
 
 type Policy struct {
 	User                string
@@ -36,16 +26,16 @@ type Policy struct {
 	NMSStatus			int
 }
 
-func (pc *Policy) GetPolicyKey() (PolicyKey) {
-	return PolicyKey{User: pc.User, Server: pc.Server}
-} 
-
 func NewPolicy(u string, c string, s string) *Policy {
 	return &Policy{User: u, Command: c, Server: s,
 		SessionOpened: false, NMSStatus: Inactive}
 }
 
-func (pc *Policy) AskForApproval(store map[PolicyKey]PolicyScope) error {
+func (pc *Policy) GetPolicyKey() (store.RequestedPerm) {
+    return store.RequestedPerm{AUser: pc.User, AServer: pc.Server}
+}
+
+func (pc *Policy) AskForApproval(scopedStore store.PolicyScope) error {
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
@@ -63,9 +53,12 @@ func (pc *Policy) AskForApproval(store map[PolicyKey]PolicyScope) error {
 	}
 	if text == "a" {
 		pc.ApprovedAllCommands = true
-		scope := store[pc.GetPolicyKey()]
-		scope.AllCommands = true
-		store[pc.GetPolicyKey()] = scope
+		rules, exists := scopedStore[pc.GetPolicyKey()]
+		if exists == false {
+			rules = *new(store.PolicyRule)
+		}
+		rules.AllCommands = true
+		scopedStore[pc.GetPolicyKey()] = rules
 		return err
 	}
 	return err
