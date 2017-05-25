@@ -274,6 +274,7 @@ func (t *handshakeTransport) readLoop() {
 		first = false
 		if err != nil {
 			t.readError = err
+			log.Printf("Handshake %v: Error reading packet, %s", t.id(), err)
 			close(t.incoming)
 			break
 		}
