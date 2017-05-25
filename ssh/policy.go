@@ -35,7 +35,7 @@ func (pc *Policy) GetPolicyKey() (store.RequestedPerm) {
     return store.RequestedPerm{AUser: pc.User, AServer: pc.Server}
 }
 
-func (pc *Policy) AskForApproval(scopedStore store.PolicyScope) error {
+func (pc *Policy) AskForApproval(scopedStore store.ScopedStore) error {
 	reader := bufio.NewReader(os.Stdin)
 	var text string
 	// switch to regex
@@ -53,12 +53,16 @@ func (pc *Policy) AskForApproval(scopedStore store.PolicyScope) error {
 	}
 	if text == "a" {
 		pc.ApprovedAllCommands = true
-		rules, exists := scopedStore[pc.GetPolicyKey()]
+		rules, exists := scopedStore.Scope[pc.GetPolicyKey()]
 		if exists == false {
 			rules = *new(store.PolicyRule)
 		}
 		rules.AllCommands = true
-		scopedStore[pc.GetPolicyKey()] = rules
+		scopedStore.Scope[pc.GetPolicyKey()] = rules
+		err2 := scopedStore.Save()
+		if err2 != nil {
+			log.Printf("Saving policy to disk failed: %s", err2)
+		}
 		return err
 	}
 	return err
