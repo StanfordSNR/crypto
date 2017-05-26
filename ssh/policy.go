@@ -150,8 +150,8 @@ func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []by
 	case *kexInitMsg:		
 		if pc.NMSStatus != Success && !pc.ApprovedAllCommands {
 			log.Printf("Requested kexInit without first sending no more sessions.")
-			if pc.EscalateApproval() != nil {
-				return false, Marshal(disconnectMsg{Reason: 2, Message: "Must issue no-more-sessions before handoff"}), nil
+			if err = pc.EscalateApproval(); err != nil {
+				return false, Marshal(disconnectMsg{Reason: 2, Message: "Must issue no-more-sessions before handoff"}), err
 			}
 		}
 		return true, nil, nil

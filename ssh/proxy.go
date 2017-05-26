@@ -120,7 +120,7 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 		clientConf:     clientConfig,
 		serverConf:     serverConf,
 		filterClientCB: filterCCB,
-		filterServerCB:	filterSCB,
+		filterServerCB: filterSCB,
 	}, nil
 }
 
@@ -166,6 +166,8 @@ func (p *proxy) Run() <-chan error {
 			allowed, response, err := p.filterClientCB(packet)
 			if err != nil {
 				log.Printf("Got error from client packet filter: %s", err)
+				p.toClient.trans.writePacket(response)
+				p.toServer.trans.Close()
 				break
 			}
 			if !allowed {
@@ -202,7 +204,6 @@ func (p *proxy) Run() <-chan error {
 			// From server to client forwarding
 			packet, err := p.toServer.trans.readPacket()
 			if err != nil {
-				forwardingDone <- err
 				break
 			}
 
@@ -229,7 +230,6 @@ func (p *proxy) Run() <-chan error {
 
 			err = p.toClient.trans.writePacket(packet)
 			if err != nil {
-				forwardingDone <- err
 				break
 			}
 			out, _ := p.toClient.trans.getSequenceNumbers()
@@ -241,10 +241,10 @@ func (p *proxy) Run() <-chan error {
 				if debugProxy {
 					log.Printf("Got msgNewKeys from server, finishing server->client forwarding")
 				}
-				forwardingDone <- nil
 				break
 			}
 		}
+		forwardingDone <- err
 	}()
 	done := make(chan error)
 	go func() {
