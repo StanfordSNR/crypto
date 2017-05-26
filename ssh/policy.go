@@ -31,7 +31,7 @@ func NewPolicy(u string, c string, s string) *Policy {
 		SessionOpened: false, NMSStatus: Inactive}
 }
 
-func (pc *Policy) GetPolicyKey() (store.RequestedPerm) {
+func (pc *Policy) GetKey() (store.RequestedPerm) {
     return store.RequestedPerm{AUser: pc.User, AServer: pc.Server}
 }
 
@@ -53,12 +53,12 @@ func (pc *Policy) AskForApproval(scopedStore store.ScopedStore) error {
 	}
 	if text == "a" {
 		pc.ApprovedAllCommands = true
-		rules, exists := scopedStore.Scope[pc.GetPolicyKey()]
+		rules, exists := scopedStore.PolicyScope[pc.GetKey()]
 		if exists == false {
 			rules = *new(store.PolicyRule)
 		}
 		rules.AllCommands = true
-		scopedStore.Scope[pc.GetPolicyKey()] = rules
+		scopedStore.PolicyScope[pc.GetKey()] = rules
 		err2 := scopedStore.Save()
 		if err2 != nil {
 			log.Printf("Saving policy to disk failed: %s", err2)
