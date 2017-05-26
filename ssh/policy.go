@@ -1,12 +1,11 @@
 package ssh
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strings"
+
 	"golang.org/x/crypto/sha3"
 )
 
@@ -17,43 +16,47 @@ const (
 	Failure
 )
 
+type PromptUserFunc func(txt string) (string, error)
+
 type Policy struct {
+	ClientHostname string
+	ClientPort     uint32
+	ClientUsername string
+
 	User                string
 	Command             string
 	Server              string
 	ApprovedAllCommands bool
 	SessionOpened       bool
-	NMSStatus			int
+	NMSStatus           int
+	Prompt              PromptUserFunc
 }
 
 func (pc *Policy) GetPolicyID() (hash [32]byte) {
 	return sha3.Sum256([]byte(pc.User + "||" + pc.Server))
-} 
-
-func NewPolicy(u string, c string, s string) *Policy {
-	return &Policy{User: u, Command: c, Server: s,
-		SessionOpened: false, NMSStatus: Inactive}
 }
 
 type policyID func(pc *Policy) [32]byte
 
 func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
-	reader := bufio.NewReader(os.Stdin)
-	var text string
+	text := "."
+	var err error
 	// switch to regex
-	for text != "y" && text != "n" && text != "a" {
+	for err == nil && text != "y" && text != "n" && text != "a" && text != "" {
 		// if with wrapper, approval can be done only for session?
-		fmt.Printf("Approve running '%s'/all commands once on %s@%s? [y/n/a]:",
-			pc.Command, pc.User, pc.Server)
-		text, _ = reader.ReadString('\n')
+		text, err = pc.Prompt(fmt.Sprintf("Approve %s@%s:%d running '%s' on %s@%s? Approve all future commands? [Y/n/a]:",
+			pc.ClientUsername, pc.ClientHostname, pc.ClientPort, pc.Command, pc.User, pc.Server))
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
+
 	}
 
-	var err error
+	if err != nil {
+		return err
+	}
 	if text == "n" {
 		err = errors.New("Policy rejected client request")
 	}
-	if text == "a" {
+	if text == "a" || text == "" {
 		pc.ApprovedAllCommands = true
 		// To be changed to include client if we move to one agent total vs one agent per conn
 		// similarly, if we remember single commands
@@ -64,16 +67,16 @@ func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
 }
 
 func (pc *Policy) EscalateApproval() error {
-	reader := bufio.NewReader(os.Stdin)
 	var text string
+	var err error
 	// switch to regex
-	for text != "y" && text != "n" {
-		fmt.Printf(`Allow handoff of connection %s@%s? This will enable the client to potentially run any other command on this server. [y/n]:`, pc.User, pc.Server)
-		text, _ = reader.ReadString('\n')
+	for err != nil && text != "y" && text != "n" {
+		text, err = pc.Prompt(fmt.Sprintf(`Allow  %s@%s:%d full control of %s@%s? [Y/n]:`, pc.ClientUsername, pc.ClientHostname, pc.ClientPort, pc.User, pc.Server))
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
 	}
-
-	var err error
+	if err != nil {
+		return err
+	}
 	if text == "n" {
 		err = errors.New("Policy rejected approval escalation")
 	}
@@ -142,7 +145,7 @@ func (pc *Policy) FilterClientPacket(packet []byte) (allowed bool, response []by
 			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
 		return true, nil, nil
-	case *kexInitMsg:		
+	case *kexInitMsg:
 		if pc.NMSStatus != Success && !pc.ApprovedAllCommands {
 			log.Printf("Requested kexInit without first sending no more sessions.")
 			if err = pc.EscalateApproval(); err != nil {

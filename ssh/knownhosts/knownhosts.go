@@ -334,12 +334,9 @@ func (db *hostKeyDB) check(address string, remote net.Addr, remoteKey ssh.Public
 	}
 
 	host, port, err := net.SplitHostPort(remote.String())
-	if err != nil {
-		return fmt.Errorf("knownhosts: SplitHostPort(%s): %v", remote, err)
-	}
-
-	addrs := []addr{
-		{host, port},
+	addrs := []addr{}
+	if err == nil {
+		addrs = append(addrs, addr{host, port})
 	}
 
 	if address != "" {
