@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"golang.org/x/crypto/sha3"
+	"github.com/dimakogan/ssh/gossh/store"
 )
 
 const (
@@ -32,13 +32,11 @@ type Policy struct {
 	Prompt              PromptUserFunc
 }
 
-func (pc *Policy) GetPolicyID() (hash [32]byte) {
-	return sha3.Sum256([]byte(pc.User + "||" + pc.Server))
+func (pc *Policy) GetKey() store.RequestedPerm {
+	return store.RequestedPerm{AUser: pc.User, AServer: pc.Server}
 }
 
-type policyID func(pc *Policy) [32]byte
-
-func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
+func (pc *Policy) AskForApproval(scopedStore store.ScopedStore) error {
 	text := "."
 	var err error
 	// switch to regex
@@ -47,7 +45,6 @@ func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
 		text, err = pc.Prompt(fmt.Sprintf("Approve %s@%s:%d running '%s' on %s@%s? Approve all future commands? [Y/n/a]:",
 			pc.ClientUsername, pc.ClientHostname, pc.ClientPort, pc.Command, pc.User, pc.Server))
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
-
 	}
 
 	if err != nil {
@@ -56,11 +53,18 @@ func (pc *Policy) AskForApproval(store map[[32]byte]bool) error {
 	if text == "n" {
 		err = errors.New("Policy rejected client request")
 	}
-	if text == "a" || text == "" {
+	if text == "a" {
 		pc.ApprovedAllCommands = true
-		// To be changed to include client if we move to one agent total vs one agent per conn
-		// similarly, if we remember single commands
-		store[pc.GetPolicyID()] = true
+		rules, exists := scopedStore.PolicyScope[pc.GetKey()]
+		if exists == false {
+			rules = *new(store.PolicyRule)
+		}
+		rules.AllCommands = true
+		scopedStore.PolicyScope[pc.GetKey()] = rules
+		err2 := scopedStore.Save()
+		if err2 != nil {
+			log.Printf("Saving policy to disk failed: %s", err2)
+		}
 		return err
 	}
 	return err
