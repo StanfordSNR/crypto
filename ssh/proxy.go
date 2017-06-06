@@ -73,19 +73,10 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 		log.Printf("Connected to server successfully")
 	}
 	toServerConn := &connection{transport: toServerTransport}
-	err = toServerConn.clientAuthenticate(clientConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	doneWithKex := make(chan struct{})
-	toServerTransport.stopKexHandling(doneWithKex)
-	<-doneWithKex
 
 	// Connect to client
 	serverConf := ServerConfig{}
 	serverConf.SetDefaults()
-	serverConf.NoClientAuth = true
 	serverConf.ServerVersion = string(serverVersion)
 	serverConf.AddHostKey(&NonePrivateKey{})
 
@@ -99,10 +90,28 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 
 	toClientSessionID := toClientTransport.getSessionID()
 	toClientConn := &connection{transport: toClientTransport}
+
+	// Authentication
+	err = toServerConn.clientAuthenticate(clientConfig)
+	if err != nil {
+		// Simulate authentication failure for client
+		serverConf.PublicKeyCallback = func(conn ConnMetadata, key PublicKey) (*Permissions, error) {
+			return nil, err
+		}
+
+		toClientConn.serverAuthenticate(&serverConf)
+		return nil, err
+	}
+
+	serverConf.NoClientAuth = true
 	_, err = toClientConn.serverAuthenticate(&serverConf)
 	if err != nil {
 		return nil, err
 	}
+
+	doneWithKex := make(chan struct{})
+	toServerTransport.stopKexHandling(doneWithKex)
+	<-doneWithKex
 
 	doneWithKex = make(chan struct{})
 	if debugProxy {
