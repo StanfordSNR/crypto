@@ -64,16 +64,6 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 		newTransport(toServer, clientConfig.Rand, true /* is client */),
 		clientVersion, serverVersion, clientConfig, dialAddress, toServer.RemoteAddr())
 
-	if err := toServerTransport.waitSession(); err != nil {
-		return nil, err
-	}
-
-	toServerSessionID := toServerTransport.getSessionID()
-	if debugProxy {
-		log.Printf("Connected to server successfully")
-	}
-	toServerConn := &connection{transport: toServerTransport}
-
 	// Connect to client
 	serverConf := ServerConfig{}
 	serverConf.SetDefaults()
@@ -83,6 +73,18 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 	toClientTransport := newServerTransport(
 		newTransport(toClient, serverConf.Rand, false /* not client */),
 		clientVersion, serverVersion, &serverConf)
+
+	// Establish sessions
+	if err := toServerTransport.waitSession(); err != nil {
+		toClientTransport.writePacket(Marshal(disconnectMsg{Message: err.Error()}))
+		return nil, err
+	}
+
+	toServerSessionID := toServerTransport.getSessionID()
+	if debugProxy {
+		log.Printf("Connected to server successfully")
+	}
+	toServerConn := &connection{transport: toServerTransport}
 
 	if err = toClientTransport.waitSession(); err != nil {
 		return nil, err
