@@ -74,7 +74,7 @@ func (pc *Policy) EscalateApproval() error {
 	var text string
 	var err error
 	// switch to regex
-	for err != nil && text != "y" && text != "n" {
+	for err == nil && text != "y" && text != "n" {
 		text, err = pc.Prompt(fmt.Sprintf(`Allow  %s@%s:%d full control of %s@%s? [Y/n]:`, pc.ClientUsername, pc.ClientHostname, pc.ClientPort, pc.User, pc.Server))
 		text = strings.ToLower(strings.Trim(text, " \r\n"))
 	}
