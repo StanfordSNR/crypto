@@ -21,17 +21,31 @@ type PromptUserFunc func(txt string) (string, error)
 type Filter struct {
 	// kept to validate that promised command is made command (may be unecessary since we don't check thereafter if all approved)
 	Command             string
+	Store 				policy.Store
 	Scope 				policy.Scope
 	SessionOpened       bool
 	NMSStatus           int
 	Prompt              PromptUserFunc
 }
 
-func (fil *Filter) Approved() bool {
-	return fil.Scope.Approved(fil.Command)
+func NewFilter(givenScope policy.Scope, givenStore policy.Store, givenCommand string, givenPrompt PromptUserFunc) *Filter {
+	return &Filter {
+		Command:	givenCommand,
+	   	Store:	 	givenStore,
+		Scope:	 	givenScope,
+		Prompt:	 	givenPrompt,
+	}
 }
 
-func (fil *Filter) AskForApproval() error {
+func (fil *Filter) IsApproved() error {
+    storedRule, ok := fil.Store[fil.Scope]
+    if ok && storedRule.IsApproved(fil.Command) {
+    	return nil
+    }
+    return fil.askForApproval()
+}
+
+func (fil *Filter) askForApproval() error {
     text := "."
     var err error
     // switch to regex
@@ -41,6 +55,7 @@ func (fil *Filter) AskForApproval() error {
             fil.Scope.ClientUsername, fil.Scope.ClientHostname, fil.Scope.ClientPort, fil.Command, fil.Scope.ServiceUsername, fil.Scope.ServiceHostname))
         text = strings.ToLower(strings.Trim(text, " \r\n"))
     }
+    fmt.Printf("here: return is %s %s", text, err)
 
     if err != nil {
         return err
@@ -49,15 +64,7 @@ func (fil *Filter) AskForApproval() error {
         err = errors.New("Policy rejected client request")
     }
     if text == "a" {
-
-        rule := fil.Scope.GetRule()
-        rule.AllCommands = true
-        err := fil.Scope.SetRule(rule)
-
-        if err != nil {
-            log.Printf("Saving policy to disk failed: %s", err)
-        }
-        return err
+    	err = fil.Store.SetAllAllowedInScope(fil.Scope)
     }
     // add a "y" check if you want to store one time approval.
     return err
@@ -143,7 +150,7 @@ func (fil *Filter) FilterClientPacket(packet []byte) (allowed bool, response []b
 		}
 		return true, nil, nil
 	case *kexInitMsg:
-		if fil.NMSStatus != Success && !fil.Scope.GetRule().AllCommands {
+		if fil.NMSStatus != Success && !fil.Store.GetRule(fil.Scope).AllCommands {
 			log.Printf("Requested kexInit without first sending no more sessions.")
 			if err = fil.EscalateApproval(); err != nil {
 				return false, Marshal(disconnectMsg{Reason: 2, Message: "Must issue no-more-sessions before handoff"}), err
