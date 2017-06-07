@@ -4,9 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
-
 	"github.com/dimakogan/ssh/gossh/policy"
+	i "github.com/sternhenri/interact"
 )
 
 const (
@@ -46,47 +45,105 @@ func (fil *Filter) IsApproved() error {
 }
 
 func (fil *Filter) askForApproval() error {
-    text := "."
+    var resp int64
     var err error
-    // switch to regex
-    for err == nil && text != "y" && text != "n" && text != "a" && text != "" {
-        // if with wrapper, approval can be done only for session?
-        text, err = fil.Prompt(fmt.Sprintf("Approve %s@%s:%d running '%s' on %s@%s? Approve all future commands? [Y/n/a]:",
-            fil.Scope.ClientUsername, fil.Scope.ClientHostname, fil.Scope.ClientPort, fil.Command, fil.Scope.ServiceUsername, fil.Scope.ServiceHostname))
-        text = strings.ToLower(strings.Trim(text, " \r\n"))
-    }
-    fmt.Printf("here: return is %s %s", text, err)
 
-    if err != nil {
-        return err
-    }
-    if text == "n" {
+	i.Run(&i.Interact{
+		Questions: []*i.Question{
+			{
+				Quest: i.Quest{
+                    Msg: fmt.Sprintf("Allow %s@%s:%d to run '%s' on %s@%s?", 
+                    	fil.Scope.ClientUsername, fil.Scope.ClientHostname, 
+                    	fil.Scope.ClientPort, fil.Command, fil.Scope.ServiceUsername, 
+                    	fil.Scope.ServiceHostname),
+                    Choices: i.Choices{
+                        Alternatives: []i.Choice{
+                            {
+                                Text: "Disallow",
+                            },
+                            {
+                                Text: "Allow once",
+                            },
+                            {
+                                Text: "Allow forever",
+                            },
+                            {
+                       		 	Text: fmt.Sprintf("Allow %s@%s:%d to run any command on %s@%s forever",
+                       		 		fil.Scope.ClientUsername, fil.Scope.ClientHostname,
+                       		 		fil.Scope.ClientPort, fil.Scope.ServiceUsername,
+                       		 		fil.Scope.ServiceHostname),
+                            },
+                        },
+                    },
+                },
+                Action: func(c i.Context) interface{} {
+                	fmt.Println("1 %s", c)
+                	fmt.Println("2 %s", c.Ans())
+                	// fmt.Println("3 %s", c.Ans().Int())
+                    resp, _ = c.Ans().Int()
+                    return nil
+                },
+			},
+		},
+	})
+
+	switch resp {
+	case 1:
         err = errors.New("Policy rejected client request")
-    }
-    if text == "a" {
+    case 2:
+    	err = nil
+    case 3:
+    	err = fil.Store.SetCommandAllowedInScope(fil.Scope, fil.Command)
+    case 4:
     	err = fil.Store.SetAllAllowedInScope(fil.Scope)
-    }
-    // add a "y" check if you want to store one time approval.
+	}
+
     return err
 }
 
 func (fil *Filter) EscalateApproval() error {
-	var text string
+	var resp int64
 	var err error
-	// switch to regex
-	for err == nil && text != "y" && text != "n" {
-		text, err = fil.Prompt(fmt.Sprintf(`Allow  %s@%s:%d full control of %s@%s? [Y/n]:`, fil.Scope.ClientUsername, fil.Scope.ClientHostname, fil.Scope.ClientPort, fil.Scope.ServiceUsername, fil.Scope.ServiceHostname))
-		text = strings.ToLower(strings.Trim(text, " \r\n"))
-	}
-	if err != nil {
-		return err
-	}
-	if text == "n" {
+
+	i.Run(&i.Interact{
+		Questions: []*i.Question{
+			{
+				Quest: i.Quest{
+                    Msg: fmt.Sprintf("Can't enforce permission for a single command. Allow %s@%s:%d to run any command on %s@%s?", 
+                    	fil.Scope.ClientUsername, fil.Scope.ClientHostname, 
+                    	fil.Scope.ClientPort, fil.Scope.ServiceUsername, 
+                    	fil.Scope.ServiceHostname),
+                    Choices: i.Choices{
+                        Alternatives: []i.Choice{
+                            {
+                                Text: "Disallow",
+                            },
+                            {
+                                Text: "Allow for session",
+                            },
+                            {
+                                Text: "Allow forever",
+                            },
+                        },
+                    },
+                },
+                Action: func(c i.Context) interface{} {
+                    resp, _ = c.Ans().Int()
+                    return nil
+                },
+			},
+		},
+	})
+
+	switch resp {
+	case 1:
 		err = errors.New("Policy rejected approval escalation")
+	case 2:
+		err = nil
+	case 3:
+    	err = fil.Store.SetAllAllowedInScope(fil.Scope)
 	}
-	// (dimakogan) store escalation if 'y' --> pro: it is equivalent to saying yes+all,
-	// con: server impl may change, asking over and over may serve a purpose.
-	// Must change UX to explain consequence if we change it.
+
 	return err
 }
 
@@ -100,7 +157,7 @@ func (fil *Filter) FilterServerPacket(packet []byte) (validState bool, response 
 		if debugProxy {
 			log.Printf("Server approved no-more-sessions.")
 		}
-		fil.NMSStatus = Success
+		fil.NMSStatus = Success 
 	case msgRequestFailure:
 		if debugProxy {
 			log.Printf("Server sent no-more-sessions failure.")
