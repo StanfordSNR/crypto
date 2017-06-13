@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/dimakogan/ssh/gossh/policy"
-	i "github.com/sternhenri/interact"
+	i "github.com/tockins/interact"
 )
 
 const (
