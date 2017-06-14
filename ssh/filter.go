@@ -3,10 +3,9 @@ package ssh
 import (
 	"errors"
 	"fmt"
-	"log"
-
+	"github.com/dimakogan/ssh/gossh/common"
 	"github.com/dimakogan/ssh/gossh/policy"
-	i "github.com/tockins/interact"
+	"log"
 )
 
 const (
@@ -16,8 +15,6 @@ const (
 	Failure
 )
 
-type PromptUserFunc func(txt string) (string, error)
-
 type Filter struct {
 	// kept to validate that promised command is made command (may be unecessary since we don't check thereafter if all approved)
 	Command       string
@@ -25,10 +22,10 @@ type Filter struct {
 	Scope         policy.Scope
 	SessionOpened bool
 	NMSStatus     int
-	Prompt        PromptUserFunc
+	Prompt        common.PromptUserFunc
 }
 
-func NewFilter(givenScope policy.Scope, givenStore policy.Store, givenCommand string, givenPrompt PromptUserFunc) *Filter {
+func NewFilter(givenScope policy.Scope, givenStore policy.Store, givenCommand string, givenPrompt common.PromptUserFunc) *Filter {
 	return &Filter{
 		Command: givenCommand,
 		Store:   givenStore,
@@ -46,53 +43,32 @@ func (fil *Filter) IsApproved() error {
 }
 
 func (fil *Filter) askForApproval() error {
-	var resp int64
-	var err error
 
-	i.Run(&i.Interact{
-		Questions: []*i.Question{
-			{
-				Quest: i.Quest{
-					Msg: fmt.Sprintf("Allow %s@%s:%d to run '%s' on %s@%s?",
-						fil.Scope.ClientUsername, fil.Scope.ClientHostname,
-						fil.Scope.ClientPort, fil.Command, fil.Scope.ServiceUsername,
-						fil.Scope.ServiceHostname),
-					Choices: i.Choices{
-						Alternatives: []i.Choice{
-							{
-								Text: "Disallow",
-							},
-							{
-								Text: "Allow once",
-							},
-							{
-								Text: "Allow forever",
-							},
-							{
-								Text: fmt.Sprintf("Allow %s@%s:%d to run any command on %s@%s forever",
-									fil.Scope.ClientUsername, fil.Scope.ClientHostname,
-									fil.Scope.ClientPort, fil.Scope.ServiceUsername,
-									fil.Scope.ServiceHostname),
-							},
-						},
-					},
-				},
-				Action: func(c i.Context) interface{} {
-					resp, _ = c.Ans().Int()
-					return nil
-				},
-			},
+	prompt := fmt.Sprintf("Allow %s@%s:%d to run '%s' on %s@%s?",
+		fil.Scope.ClientUsername, fil.Scope.ClientHostname,
+		fil.Scope.ClientPort, fil.Command, fil.Scope.ServiceUsername,
+		fil.Scope.ServiceHostname)
+
+	args := common.Prompt{
+		Question: prompt,
+		Choices: []string{
+			"Disallow", "Allow once", "Allow forever",
+			fmt.Sprintf("Allow %s@%s:%d to run any command on %s@%s forever",
+				fil.Scope.ClientUsername, fil.Scope.ClientHostname,
+				fil.Scope.ClientPort, fil.Scope.ServiceUsername,
+				fil.Scope.ServiceHostname),
 		},
-	})
+	}
+	resp, err := fil.Prompt(args)
 
 	switch resp {
-	case 1:
+	case "1":
 		err = errors.New("Policy rejected client request")
-	case 2:
+	case "2":
 		err = nil
-	case 3:
+	case "3":
 		err = fil.Store.SetCommandAllowedInScope(fil.Scope, fil.Command)
-	case 4:
+	case "4":
 		err = fil.Store.SetAllAllowedInScope(fil.Scope)
 	}
 
@@ -100,45 +76,24 @@ func (fil *Filter) askForApproval() error {
 }
 
 func (fil *Filter) EscalateApproval() error {
-	var resp int64
-	var err error
 
-	i.Run(&i.Interact{
-		Questions: []*i.Question{
-			{
-				Quest: i.Quest{
-					Msg: fmt.Sprintf("Can't enforce permission for a single command. Allow %s@%s:%d to run any command on %s@%s?",
-						fil.Scope.ClientUsername, fil.Scope.ClientHostname,
-						fil.Scope.ClientPort, fil.Scope.ServiceUsername,
-						fil.Scope.ServiceHostname),
-					Choices: i.Choices{
-						Alternatives: []i.Choice{
-							{
-								Text: "Disallow",
-							},
-							{
-								Text: "Allow for session",
-							},
-							{
-								Text: "Allow forever",
-							},
-						},
-					},
-				},
-				Action: func(c i.Context) interface{} {
-					resp, _ = c.Ans().Int()
-					return nil
-				},
-			},
-		},
-	})
+	prompt := fmt.Sprintf("Can't enforce permission for a single command. Allow %s@%s:%d to run any command on %s@%s?",
+		fil.Scope.ClientUsername, fil.Scope.ClientHostname,
+		fil.Scope.ClientPort, fil.Scope.ServiceUsername,
+		fil.Scope.ServiceHostname)
+
+	args := common.Prompt{
+		Question: prompt,
+		Choices:  []string{"Disallow", "Allow for session", "Allow forever"},
+	}
+	resp, err := fil.Prompt(args)
 
 	switch resp {
-	case 1:
+	case "1":
 		err = errors.New("Policy rejected approval escalation")
-	case 2:
+	case "2":
 		err = nil
-	case 3:
+	case "3":
 		err = fil.Store.SetAllAllowedInScope(fil.Scope)
 	}
 
