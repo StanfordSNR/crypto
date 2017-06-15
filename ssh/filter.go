@@ -62,13 +62,13 @@ func (fil *Filter) askForApproval() error {
 	resp, err := fil.Prompt(args)
 
 	switch resp {
-	case "1":
+	case 1:
 		err = errors.New("Policy rejected client request")
-	case "2":
+	case 2:
 		err = nil
-	case "3":
+	case 3:
 		err = fil.Store.SetCommandAllowedInScope(fil.Scope, fil.Command)
-	case "4":
+	case 4:
 		err = fil.Store.SetAllAllowedInScope(fil.Scope)
 	}
 
@@ -89,11 +89,11 @@ func (fil *Filter) EscalateApproval() error {
 	resp, err := fil.Prompt(args)
 
 	switch resp {
-	case "1":
+	case 1:
 		err = errors.New("Policy rejected approval escalation")
-	case "2":
+	case 2:
 		err = nil
-	case "3":
+	case 3:
 		err = fil.Store.SetAllAllowedInScope(fil.Scope)
 	}
 
