@@ -3,9 +3,10 @@ package ssh
 import (
 	"errors"
 	"fmt"
+	"log"
+
 	"github.com/dimakogan/ssh/gossh/common"
 	"github.com/dimakogan/ssh/gossh/policy"
-	"log"
 )
 
 const (
@@ -35,8 +36,8 @@ func NewFilter(givenScope policy.Scope, givenStore policy.Store, givenCommand st
 }
 
 func (fil *Filter) IsApproved() error {
-	storedRule, ok := fil.Store[fil.Scope]
-	if ok && storedRule.IsApproved(fil.Command) {
+	storedRule := fil.Store.GetRule(fil.Scope)
+	if storedRule.IsApproved(fil.Command) {
 		return nil
 	}
 	return fil.askForApproval()
@@ -63,7 +64,7 @@ func (fil *Filter) askForApproval() error {
 
 	switch resp {
 	case 1:
-		err = errors.New("Policy rejected client request")
+		err = errors.New("User rejected client request")
 	case 2:
 		err = nil
 	case 3:
