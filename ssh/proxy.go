@@ -27,13 +27,12 @@ type proxy struct {
 	clientConf *ClientConfig
 	serverConf ServerConfig
 
-	filterClientCB MessageFilterCallback
-	filterServerCB MessageFilterCallback
+	filter *Filter
 }
 
 type MessageFilterCallback func(p []byte) (isOK bool, response []byte, err error)
 
-func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, filterCCB MessageFilterCallback, filterSCB MessageFilterCallback) (ProxyConn, error) {
+func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clientConfig *ClientConfig, fil *Filter) (ProxyConn, error) {
 	var err error
 
 	serverVersion, err := readVersion(toServer)
@@ -126,12 +125,11 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 	}
 
 	return &proxy{
-		toClient:       side{toClient, toClientTransport, toClientSessionID},
-		toServer:       side{toServer, toServerTransport, toServerSessionID},
-		clientConf:     clientConfig,
-		serverConf:     serverConf,
-		filterClientCB: filterCCB,
-		filterServerCB: filterSCB,
+		toClient:   side{toClient, toClientTransport, toClientSessionID},
+		toServer:   side{toServer, toServerTransport, toServerSessionID},
+		clientConf: clientConfig,
+		serverConf: serverConf,
+		filter:     fil,
 	}, nil
 }
 
@@ -174,7 +172,7 @@ func (p *proxy) Run() <-chan error {
 				log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
 			}
 
-			allowed, response, err := p.filterClientCB(packet)
+			allowed, response, err := p.filter.FilterClientPacket(packet)
 			if err != nil {
 				log.Printf("Got error from client packet filter: %s", err)
 				p.toClient.trans.writePacket(response)
@@ -225,7 +223,7 @@ func (p *proxy) Run() <-chan error {
 				log.Printf("Got message %d from server: %s", packet[0], reflect.TypeOf(msg))
 			}
 
-			validState, response, err := p.filterServerCB(packet)
+			validState, response, err := p.filter.FilterServerPacket(packet)
 			if err != nil {
 				log.Printf("Got error from server packet filter: %s", err)
 				p.toClient.trans.writePacket(response)

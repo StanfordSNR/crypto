@@ -1,12 +1,7 @@
 package ssh
 
 import (
-	"errors"
-	"fmt"
 	"log"
-
-	"github.com/dimakogan/ssh/gossh/common"
-	"github.com/dimakogan/ssh/gossh/policy"
 )
 
 const (
@@ -16,93 +11,25 @@ const (
 	Failure
 )
 
+type EscalateFunc func() error
+
 type Filter struct {
 	// kept to validate that promised command is made command (may be unecessary since we don't check thereafter if all approved)
-	Command       string
-	Store         policy.Store
-	Scope         policy.Scope
-	SessionOpened bool
-	NMSStatus     int
-	Prompt        common.PromptUserFunc
+	command       string
+	sessionOpened bool
+	nmsStatus     int
+	escalate      EscalateFunc
 }
 
-func NewFilter(givenScope policy.Scope, givenStore policy.Store, givenCommand string, givenPrompt common.PromptUserFunc) *Filter {
+func NewFilter(givenCommand string, escalate EscalateFunc) *Filter {
 	return &Filter{
-		Command: givenCommand,
-		Store:   givenStore,
-		Scope:   givenScope,
-		Prompt:  givenPrompt,
+		command:  givenCommand,
+		escalate: escalate,
 	}
-}
-
-func (fil *Filter) IsApproved() error {
-	storedRule := fil.Store.GetRule(fil.Scope)
-	if storedRule.IsApproved(fil.Command) {
-		return nil
-	}
-	return fil.askForApproval()
-}
-
-func (fil *Filter) askForApproval() error {
-
-	prompt := fmt.Sprintf("Allow %s@%s:%d to run '%s' on %s@%s?",
-		fil.Scope.ClientUsername, fil.Scope.ClientHostname,
-		fil.Scope.ClientPort, fil.Command, fil.Scope.ServiceUsername,
-		fil.Scope.ServiceHostname)
-
-	args := common.Prompt{
-		Question: prompt,
-		Choices: []string{
-			"Disallow", "Allow once", "Allow forever",
-			fmt.Sprintf("Allow %s@%s:%d to run any command on %s@%s forever",
-				fil.Scope.ClientUsername, fil.Scope.ClientHostname,
-				fil.Scope.ClientPort, fil.Scope.ServiceUsername,
-				fil.Scope.ServiceHostname),
-		},
-	}
-	resp, err := fil.Prompt(args)
-
-	switch resp {
-	case 1:
-		err = errors.New("User rejected client request")
-	case 2:
-		err = nil
-	case 3:
-		err = fil.Store.SetCommandAllowedInScope(fil.Scope, fil.Command)
-	case 4:
-		err = fil.Store.SetAllAllowedInScope(fil.Scope)
-	}
-
-	return err
-}
-
-func (fil *Filter) EscalateApproval() error {
-
-	prompt := fmt.Sprintf("Can't enforce permission for a single command. Allow %s@%s:%d to run any command on %s@%s?",
-		fil.Scope.ClientUsername, fil.Scope.ClientHostname,
-		fil.Scope.ClientPort, fil.Scope.ServiceUsername,
-		fil.Scope.ServiceHostname)
-
-	args := common.Prompt{
-		Question: prompt,
-		Choices:  []string{"Disallow", "Allow for session", "Allow forever"},
-	}
-	resp, err := fil.Prompt(args)
-
-	switch resp {
-	case 1:
-		err = errors.New("Policy rejected approval escalation")
-	case 2:
-		err = nil
-	case 3:
-		err = fil.Store.SetAllAllowedInScope(fil.Scope)
-	}
-
-	return err
 }
 
 func (fil *Filter) FilterServerPacket(packet []byte) (validState bool, response []byte, err error) {
-	if fil.NMSStatus != AwaitingReply {
+	if fil.nmsStatus != AwaitingReply {
 		return true, nil, nil
 	}
 
@@ -111,12 +38,14 @@ func (fil *Filter) FilterServerPacket(packet []byte) (validState bool, response 
 		if debugProxy {
 			log.Printf("Server approved no-more-sessions.")
 		}
-		fil.NMSStatus = Success
+		fil.nmsStatus = Success
+	case msgUnimplemented:
+		fallthrough
 	case msgRequestFailure:
 		if debugProxy {
 			log.Printf("Server sent no-more-sessions failure.")
 		}
-		fil.NMSStatus = Failure
+		fil.nmsStatus = Failure
 	}
 	return true, nil, nil
 }
@@ -129,10 +58,10 @@ func (fil *Filter) FilterClientPacket(packet []byte) (allowed bool, response []b
 
 	switch msg := decoded.(type) {
 	case *channelOpenMsg:
-		if msg.ChanType != "session" || fil.SessionOpened {
+		if msg.ChanType != "session" || fil.sessionOpened {
 			return false, Marshal(channelOpenFailureMsg{}), nil
 		}
-		fil.SessionOpened = true
+		fil.sessionOpened = true
 		return true, nil, nil
 	case *globalRequestMsg:
 		if msg.Type != NoMoreSessionRequestName {
@@ -141,7 +70,7 @@ func (fil *Filter) FilterClientPacket(packet []byte) (allowed bool, response []b
 		if debugProxy {
 			log.Printf("Client sent no-more-sessions")
 		}
-		fil.NMSStatus = AwaitingReply
+		fil.nmsStatus = AwaitingReply
 		return true, nil, nil
 	case *channelRequestMsg:
 		if msg.Request != "exec" {
@@ -153,19 +82,25 @@ func (fil *Filter) FilterClientPacket(packet []byte) (allowed bool, response []b
 		if err := Unmarshal(msg.RequestSpecificData, &execReq); err != nil {
 			return false, nil, err
 		}
-		if execReq.Command != fil.Command {
-			log.Printf("Unexpected command: %s, (expecting: %s)", execReq.Command, fil.Command)
+		if execReq.Command != fil.command {
+			log.Printf("Unexpected command: %s, (expecting: %s)", execReq.Command, fil.command)
 			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
 		return true, nil, nil
 	case *kexInitMsg:
-		if fil.NMSStatus != Success && !fil.Store.GetRule(fil.Scope).AllCommands {
-			log.Printf("Attempting handoff without successful no-more-sessions.")
-			if err = fil.EscalateApproval(); err != nil {
-				return false, Marshal(disconnectMsg{Reason: 2, Message: "Must issue no-more-sessions before handoff"}), err
-			}
+		if fil.nmsStatus == Success {
+			return true, nil, nil
 		}
-		return true, nil, nil
+		log.Printf("Attempting handoff without successful no-more-sessions.")
+		err = fil.escalate()
+		if err == nil {
+			return true, nil, nil
+		}
+		reason := "Must issue no-more-sessions before handoff"
+		if fil.nmsStatus == Failure {
+			reason = "Server does not support fine-grained permissions, and user denied full access"
+		}
+		return false, Marshal(disconnectMsg{Reason: 2, Message: reason}), err
 	default:
 		return true, nil, nil
 	}
