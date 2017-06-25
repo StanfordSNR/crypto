@@ -6,7 +6,7 @@ import (
 	"reflect"
 )
 
-const debugProxy = false
+const debugProxy = true
 
 type side struct {
 	conn      net.Conn
