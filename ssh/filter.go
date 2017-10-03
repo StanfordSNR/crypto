@@ -73,17 +73,22 @@ func (fil *Filter) FilterClientPacket(packet []byte) (allowed bool, response []b
 		fil.nmsStatus = AwaitingReply
 		return true, nil, nil
 	case *channelRequestMsg:
-		if msg.Request != "exec" {
-			log.Printf("Channel request %s blocked (only 'exec' is allowed)", msg.Request)
+		reqCmd := ""
+		if msg.Request == "pty-req" {
+			return true, nil, nil
+		}
+		if msg.Request == "exec" {
+			var execReq execMsg
+			if err := Unmarshal(msg.RequestSpecificData, &execReq); err != nil {
+				return false, nil, err
+			}
+			reqCmd = execReq.Command
+		} else if msg.Request != "shell" {
+			log.Printf("Channel request %s blocked (only 'exec'/'shell' is allowed)", msg.Request)
 			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
-
-		var execReq execMsg
-		if err := Unmarshal(msg.RequestSpecificData, &execReq); err != nil {
-			return false, nil, err
-		}
-		if execReq.Command != fil.command {
-			log.Printf("Unexpected command: %s, (expecting: %s)", execReq.Command, fil.command)
+		if reqCmd != fil.command {
+			log.Printf("Unexpected command: %s, (expecting: %s)", reqCmd, fil.command)
 			return false, Marshal(channelRequestFailureMsg{}), nil
 		}
 		return true, nil, nil
