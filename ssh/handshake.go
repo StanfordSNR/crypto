@@ -431,8 +431,8 @@ write:
 			}
 		}
 
-		if t.kexCallback != nil {
-			t.kexCallback(t.writeError)
+		if t.writeError == nil && t.kexCallback != nil {
+			t.kexCallback()
 		}
 
 		request.done <- t.writeError

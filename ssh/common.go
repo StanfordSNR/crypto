@@ -179,7 +179,7 @@ const minRekeyThreshold uint64 = 256
 
 // KexCallback is the function type for getting kex-exchange completion
 // notifications.
-type KexCallback func(error)
+type KexCallback func()
 
 // Config contains configuration data common to both ServerConfig and
 // ClientConfig.
