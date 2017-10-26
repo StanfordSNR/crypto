@@ -136,7 +136,7 @@ func findAgreedAlgorithms(clientKexInit, serverKexInit *kexInitMsg) (algs *algor
 		return
 	}
 
-	log.Printf("host key algorithms: server: %v, client: %v", clientKexInit.ServerHostKeyAlgos, serverKexInit.ServerHostKeyAlgos)
+	log.Printf("host key algorithms: server: %v, client: %v", serverKexInit.ServerHostKeyAlgos, clientKexInit.ServerHostKeyAlgos)
 	result.hostKey, err = findCommon("host key", clientKexInit.ServerHostKeyAlgos, serverKexInit.ServerHostKeyAlgos)
 	if err != nil {
 		return
