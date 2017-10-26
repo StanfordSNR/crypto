@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"sync"
 
@@ -135,6 +136,7 @@ func findAgreedAlgorithms(clientKexInit, serverKexInit *kexInitMsg) (algs *algor
 		return
 	}
 
+	log.Printf("host key algorithms: server: %v, client: %v", clientKexInit.ServerHostKeyAlgos, serverKexInit.ServerHostKeyAlgos)
 	result.hostKey, err = findCommon("host key", clientKexInit.ServerHostKeyAlgos, serverKexInit.ServerHostKeyAlgos)
 	if err != nil {
 		return

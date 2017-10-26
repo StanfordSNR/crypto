@@ -329,6 +329,7 @@ func (m *mux) openChannel(chanType string, extra []byte) (*channel, error) {
 	case *channelOpenFailureMsg:
 		return nil, &OpenChannelError{msg.Reason, msg.Message}
 	default:
+		log.Printf("ssh: unexpected packet in response to channel open: %T", msg)
 		return nil, fmt.Errorf("ssh: unexpected packet in response to channel open: %T", msg)
 	}
 }

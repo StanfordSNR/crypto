@@ -323,6 +323,7 @@ func (t *handshakeTransport) recordWriteError(err error) {
 }
 
 func (t *handshakeTransport) requestKeyExchange() {
+	log.Printf("requestKeyExchange, t.deferHostKeyVerification: %b", t.deferHostKeyVerification)
 	if t.deferHostKeyVerification {
 		// Don't initiate kex when in deferred mode
 		return
@@ -351,19 +352,25 @@ func (t *handshakeTransport) kexLoop() {
 
 write:
 	for t.getWriteError() == nil {
+		log.Printf("kex loop")
 		var request *pendingKex
 		var sent bool
 
 		for request == nil || !sent {
+			log.Printf("kex inner loop")
 			var ok bool
 			select {
 			case request, ok = <-t.startKex:
 				if !ok {
+					log.Printf("select exit: <-t.startKex NOT OK")
 					break write
 				}
+				log.Printf("select exit: <-t.startKex")
 			case <-requestKex:
+				log.Printf("select exit: <-requestKex")
 				break
 			case onStop = <-t.stopOutKex:
+				log.Printf("select exit: <-t.stopOutKex")
 				// Don't listen on new requests for outgoing kex,
 				// so no new outoing kex will be initiated
 				requestKex = nil
@@ -383,6 +390,7 @@ write:
 			}
 
 			if !sent {
+				log.Printf("!sent: sending kexInit")
 				if err := t.sendKexInit(); err != nil {
 					t.recordWriteError(err)
 					break
@@ -405,6 +413,7 @@ write:
 		// has just sent us a kexInitMsg, so it can't send
 		// another key change request, until we close the done
 		// channel on the pendingKex request.
+		log.Printf("entering keyexchange")
 
 		err := t.enterKeyExchange(request.otherInit)
 
