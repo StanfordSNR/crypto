@@ -333,41 +333,9 @@ func (db *hostKeyDB) check(address string, remote net.Addr, remoteKey ssh.Public
 		return &RevokedError{Revoked: *revoked}
 	}
 
-	host, port, err := net.SplitHostPort(remote.String())
-	addrs := []addr{}
-	if err == nil {
-		addrs = append(addrs, addr{host, port})
-	}
-
-	if address != "" {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return fmt.Errorf("knownhosts: SplitHostPort(%s): %v", address, err)
-		}
-
-		addrs = append(addrs, addr{host, port})
-	}
-
-	return db.checkAddrs(addrs, remoteKey)
-}
-
-// checkAddrs checks if we can find the given public key for any of
-// the given addresses.  If we only find an entry for the IP address,
-// or only the hostname, then this still succeeds.
-func (db *hostKeyDB) checkAddrs(addrs []addr, remoteKey ssh.PublicKey) error {
-	// TODO(hanwen): are these the right semantics? What if there
-	// is just a key for the IP address, but not for the
-	// hostname?
-
-	// Algorithm => key.
-	knownKeys := map[string]KnownKey{}
-	for _, l := range db.lines {
-		if l.match(addrs) {
-			typ := l.knownKey.Key.Type()
-			if _, ok := knownKeys[typ]; !ok {
-				knownKeys[typ] = l.knownKey
-			}
-		}
+	knownKeys, err := db.knownKeysForHost(address, remote)
+	if err != nil {
+		return err
 	}
 
 	keyErr := &KeyError{}
@@ -387,6 +355,39 @@ func (db *hostKeyDB) checkAddrs(addrs []addr, remoteKey ssh.PublicKey) error {
 	}
 
 	return nil
+}
+
+func (db *hostKeyDB) knownKeysForHost(address string, remote net.Addr) (map[string]KnownKey, error) {
+	host, port, err := net.SplitHostPort(remote.String())
+	addrs := []addr{}
+	if err == nil {
+		addrs = append(addrs, addr{host, port})
+	}
+
+	if address != "" {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("knownhosts: SplitHostPort(%s): %v", address, err)
+		}
+
+		addrs = append(addrs, addr{host, port})
+	}
+
+	// TODO(hanwen): are these the right semantics? What if there
+	// is just a key for the IP address, but not for the
+	// hostname?
+
+	// Algorithm => key.
+	knownKeys := map[string]KnownKey{}
+	for _, l := range db.lines {
+		if l.match(addrs) {
+			typ := l.knownKey.Key.Type()
+			if _, ok := knownKeys[typ]; !ok {
+				knownKeys[typ] = l.knownKey
+			}
+		}
+	}
+	return knownKeys, nil
 }
 
 // The Read function parses file contents.
@@ -431,6 +432,29 @@ func New(files ...string) (ssh.HostKeyCallback, error) {
 	certChecker.HostKeyFallback = db.check
 
 	return certChecker.CheckHostKey, nil
+}
+
+func OrderHostKeyAlgs(address string, remote net.Addr, files ...string) []string {
+	db := newHostKeyDB()
+	for _, fn := range files {
+		f, err := os.Open(fn)
+		if err != nil {
+			return []string{}
+		}
+		defer f.Close()
+		if err := db.Read(f, fn); err != nil {
+			return []string{}
+		}
+	}
+	knownKeys, err := db.knownKeysForHost(address, remote)
+	if err != nil {
+		return []string{}
+	}
+	algs := []string{}
+	for key := range knownKeys {
+		algs = append(algs, key)
+	}
+	return algs
 }
 
 // Normalize normalizes an address into the form used in known_hosts
