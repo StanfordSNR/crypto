@@ -16,7 +16,6 @@ type side struct {
 
 type ProxyConn interface {
 	Run() (done <-chan error)
-	UpdateClientSessionParams() error
 	BufferedFromServer() int
 }
 
@@ -110,19 +109,10 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 		return nil, err
 	}
 
+	// Stop kex handling with client
 	doneWithKex := make(chan struct{})
-	toServerTransport.stopKexHandling(doneWithKex)
-	<-doneWithKex
-
-	doneWithKex = make(chan struct{})
-	if debugProxy {
-		log.Printf("Stopping Kex")
-	}
 	toClientTransport.stopKexHandling(doneWithKex)
 	<-doneWithKex
-	if debugProxy {
-		log.Printf("Done with Kex")
-	}
 
 	return &proxy{
 		toClient:   side{toClient, toClientTransport, toClientSessionID},
@@ -133,27 +123,6 @@ func NewProxyConn(dialAddress string, toClient net.Conn, toServer net.Conn, clie
 	}, nil
 }
 
-func (p *proxy) UpdateClientSessionParams() error {
-	if debugProxy {
-		log.Printf("UpdateClientSessionParams begin")
-	}
-	sessionID := p.toServer.trans.getSessionID()
-	p2s, s2p := p.toServer.trans.getSequenceNumbers()
-
-	err := p.toClient.trans.updateSessionParams(sessionID, s2p, p2s)
-
-	if err != nil {
-		log.Printf("Failed to send updateClientSessionParams")
-		return err
-	}
-	if debugProxy {
-		log.Printf("UpdateClientSessionParams Complete")
-	}
-
-	return nil
-}
-
-// don't allow key exchange before channel has been opened -- no more sessions
 func (p *proxy) Run() <-chan error {
 	forwardingDone := make(chan error, 2)
 	var err error
@@ -168,10 +137,7 @@ func (p *proxy) Run() <-chan error {
 
 			msgNum := packet[0]
 			msg, err := decode(packet)
-			if debugProxy {
-				log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
-			}
-
+			log.Printf("Got message %d from client: %s", msgNum, reflect.TypeOf(msg))
 			allowed, response, err := p.filter.FilterClientPacket(packet)
 			if err != nil {
 				log.Printf("Got error from client packet filter: %s", err)
@@ -187,23 +153,31 @@ func (p *proxy) Run() <-chan error {
 				// Send a msgIgnore instead to keep sequence numbers aligned
 				p.toServer.trans.writePacket([]byte{msgIgnore})
 			}
+			if msgNum == msgKexInit {
+				log.Printf("Client has initiated handoff: stopping kex with server")
+				doneWithKex := make(chan struct{})
+				p.toServer.trans.stopKexHandling(doneWithKex)
+				<-doneWithKex
+				log.Printf("Done with Kex")
+			}
 			// Packet allowed message, forwarding it.
 			err = p.toServer.trans.writePacket(packet)
 			if err != nil {
 				break
 			}
 			_, in := p.toClient.trans.getSequenceNumbers()
-			out, _ := p.toServer.trans.getSequenceNumbers()
-			if debugProxy {
-				log.Printf("Forwarded seqNum: %d from client to server as: %d", in-1, out-1)
-			}
+			p2s, s2p := p.toServer.trans.getSequenceNumbers()
+			log.Printf("Forwarded seqNum: %d from client to server as: %d", in-1, p2s-1)
 			if msgNum == msgNewKeys {
-				if debugProxy {
-					log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
-				}
+				log.Printf("Got msgNewKeys from client, finishing client->server forwarding")
 				break
+			} else if msgNum == msgKexInit {
+				sessionID := p.toServer.trans.getSessionID()
+				if err = p.toClient.trans.updateSessionParams(sessionID, s2p, p2s); err != nil {
+					log.Printf("Failed to send updateClientSessionParams")
+					break
+				}
 			}
-
 		}
 		forwardingDone <- err
 	}()

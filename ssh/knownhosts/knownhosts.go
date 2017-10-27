@@ -454,7 +454,10 @@ func OrderHostKeyAlgs(address string, remote net.Addr, files ...string) []string
 	for key := range knownKeys {
 		algs = append(algs, key)
 	}
-	return algs
+	if len(algs) > 0 {
+		return algs
+	}
+	return nil
 }
 
 // Normalize normalizes an address into the form used in known_hosts
