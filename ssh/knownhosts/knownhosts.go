@@ -439,16 +439,16 @@ func OrderHostKeyAlgs(address string, remote net.Addr, files ...string) []string
 	for _, fn := range files {
 		f, err := os.Open(fn)
 		if err != nil {
-			return []string{}
+			return nil
 		}
 		defer f.Close()
 		if err := db.Read(f, fn); err != nil {
-			return []string{}
+			return nil
 		}
 	}
 	knownKeys, err := db.knownKeysForHost(address, remote)
 	if err != nil {
-		return []string{}
+		return nil
 	}
 	algs := []string{}
 	for key := range knownKeys {
