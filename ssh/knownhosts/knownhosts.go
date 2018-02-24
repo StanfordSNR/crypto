@@ -434,33 +434,30 @@ func New(files ...string) (ssh.HostKeyCallback, error) {
 	return certChecker.CheckHostKey, nil
 }
 
-func OrderHostKeyAlgs(address string, remote net.Addr, files ...string) ([]string, error) {
+func OrderHostKeyAlgs(address string, remote net.Addr, files ...string) []string {
 	db := newHostKeyDB()
 	for _, fn := range files {
 		f, err := os.Open(fn)
-		if os.IsNotExist(err) {
-			continue
-		}
 		if err != nil {
-			return nil, err
+			return nil
 		}
 		defer f.Close()
 		if err := db.Read(f, fn); err != nil {
-			return nil, err
+			return nil
 		}
 	}
 	knownKeys, err := db.knownKeysForHost(address, remote)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	algs := []string{}
 	for key := range knownKeys {
 		algs = append(algs, key)
 	}
 	if len(algs) > 0 {
-		return algs, nil
+		return algs
 	}
-	return nil, nil
+	return nil
 }
 
 // Normalize normalizes an address into the form used in known_hosts
